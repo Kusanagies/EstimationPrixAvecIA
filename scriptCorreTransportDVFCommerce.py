@@ -3,28 +3,35 @@ import numpy as np
 from sklearn.neighbors import BallTree
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sqlalchemy import create_engine
 
-##### Chargement et nettoyage de base #####
+##### Param #####
 
-maisons = pd.read_csv('./data/dvf.csv',dtype={'code_departement': str,'code_commune':str})
-stations = pd.read_csv('./data/gtfs_donnees.csv')
-commerces = pd.read_csv('commerces_cimmunes.csv',sep=';',dtype={'departement_commune':str})
+USER = 'root'
+PASSWORD = '1618'
+HOTE = 'localhost'
+PORT = '3306'
+DB = 'EstimationIA'
 
-# On supprime les lignes sans coordonnées GPS 
-maisons = maisons.dropna(subset=['latitude','longitude'])
-stations = stations.dropna(subset=['stop_lat','stop_lon'])
+##### Creation du moteur #####
+# On construit la chaine de connexion au format attendu par SQLAlchemy
+chaine_connexion = f"mysql+pymysql://{USER}:{PASSWORD}@{HOTE}:{PORT}/{DB}"
 
-##### Filtrage pour IDF #####
-# Filtrer l'immobilier (Départements : 75, 77, 78, 91, 92, 93, 94, 95)
-departements_idf = ['75','77','78','91','92','93','94','95']
-maisons_idf = maisons[maisons['code_departement'].isint(departements_idf)].copy()
+# On crée le moteur
+moteur = create_engine(chaine_connexion)
 
-# Filtrer les stations géographiquement (Cadre GPS approximatif de l'IDF)
-# Latitudes entre 48.1 et 49.3 / Longitudes entre 1.4 et 3.6
-stations_idf = stations[
-    (stations['stop_lat'] >= 48.1) & (stations['stop_lat'] <= 49.3) & 
-    (stations['stop_lat'] >= 1.4) & (stations['stop_lon'] <= 3.6)
-].copy()
+print("Connexion à Mysql")
+
+requete_dvf = "SELECT * FROM  valeurs_foncieres_idf;"
+maisons_idf = pd.read_sql(requete_dvf,con=moteur)
+
+requete_transports = "SELECT * FROM donnees_transport_idf;"
+stations_idf = pd.read_sql(requete_transports,con=moteur)
+
+requete_commerces = "SELECT * FROM commerces_communes;"
+commerces = pd.read_sql(requete_commerces,con=moteur)
+
+print(f"Succès ! {len(maisons_idf)} maisons, {len(stations_idf)} stations et {len(commerces)} communes chargées.")
 
 ##### Calcul de la distance aux transports (BallTree)
 
@@ -67,6 +74,7 @@ matrice_corr = donnees_finales.corr()
 plt.figure(figsize=(10,8))
 sns.heatmap(matrice_corr,annot=True,cmap='coolwarm',vmin=-1,vmax=1,fmt=".2f",linewidths=0.5)
 plt.title('Corrélation IDF : Immobilier, Transports et commerces', fontsize=14)
-plt.xticks(rotations=45,ha ='rigth')
+plt.xticks(rotation=45,ha ='right')
 plt.tight_layout()
-plt.show
+print("Affichage du graphe")
+plt.show()
