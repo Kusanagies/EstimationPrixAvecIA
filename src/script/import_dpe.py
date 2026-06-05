@@ -65,7 +65,7 @@ try:
         # Insertion du lot dans MySQL
         if premier_lot:
             # Pour le 1er lot, on crée (ou remplace) la table
-            lot.to_sql(name=NOM_TABLE_SQL, con=moteur, if_exists='replace', index=False)
+            lot.to_sql(name=NOM_TABLE_SQL, con=moteur, if_exists='append', index=False)
             premier_lot = False
         else:
             # Pour les lots suivants, on ajoute (append) à la suite
