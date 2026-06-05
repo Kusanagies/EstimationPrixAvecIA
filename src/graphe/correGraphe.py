@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.neighbors import BallTree
 import seaborn as sns
 import matplotlib.pyplot as plt
+import time
 from sqlalchemy import create_engine
 
 # ==========================================
@@ -20,37 +22,43 @@ moteur = create_engine(chaine_connexion)
 print("📥 Téléchargement des données depuis les 6 tables SQL...")
 
 # 1. IMMOBILIER (DVF)
+# Modifier les requetes pour faire une recherche sur d'autre ville/région
 requete_dvf = """
 SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati
-FROM valeurs_foncieres_idf
-WHERE latitude IS NOT NULL AND surface_reelle_bati > 9;
+FROM valeurs_foncieres
+WHERE latitude IS NOT NULL 
+  AND surface_reelle_bati > 9
+  AND LEFT(code_commune, 2) IN ('75', '77', '78', '91', '92', '93', '94', '95');
 """
 maisons = pd.read_sql(requete_dvf, con=moteur)
 
 # 2. DPE (Agrégé par commune avec conversion A=7, G=1)
 requete_dpe = """
 SELECT code_insee_ban, 
-       AVG(CASE 
-           WHEN etiquette_dpe = 'A' THEN 7 
-           WHEN etiquette_dpe = 'B' THEN 6 
-           WHEN etiquette_dpe = 'C' THEN 5 
-           WHEN etiquette_dpe = 'D' THEN 4 
-           WHEN etiquette_dpe = 'E' THEN 3 
-           WHEN etiquette_dpe = 'F' THEN 2 
-           WHEN etiquette_dpe = 'G' THEN 1 
-           ELSE NULL END) AS score_dpe_moyen
+       (SUM(CASE WHEN etiquette_dpe = 'A' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_A,
+       (SUM(CASE WHEN etiquette_dpe = 'B' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_B,
+       (SUM(CASE WHEN etiquette_dpe = 'C' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_C,
+       (SUM(CASE WHEN etiquette_dpe = 'D' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_D,
+       (SUM(CASE WHEN etiquette_dpe = 'E' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_E,
+       (SUM(CASE WHEN etiquette_dpe = 'F' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_F,
+       (SUM(CASE WHEN etiquette_dpe = 'G' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_G
 FROM dpe_logements_france
 WHERE etiquette_dpe IN ('A','B','C','D','E','F','G')
+  AND LEFT(code_insee_ban, 2) IN ('75', '77', '78', '91', '92', '93', '94', '95')
 GROUP BY code_insee_ban;
 """
 dpe = pd.read_sql(requete_dpe, con=moteur)
 
 # 3. COMMERCES
-requete_commerces = "SELECT * FROM commerces_communes;"
+requete_commerces = """
+SELECT * FROM commerces_communes
+WHERE LEFT(departement_commune, 2) IN ('75', '77', '78', '91', '92', '93', '94', '95');
+"""
 commerces = pd.read_sql(requete_commerces, con=moteur)
 
 # 4. TRANSPORTS
-requete_transports = "SELECT stop_lat, stop_lon, type_station FROM donnees_transport WHERE type_station IS NOT NULL;"
+# 4. TRANSPORTS (Version simplifiée sans type_station)
+requete_transports = "SELECT stop_lat, stop_lon FROM donnees_transport WHERE stop_lat IS NOT NULL;"
 stations = pd.read_sql(requete_transports, con=moteur)
 
 # 5. MONUMENTS HISTORIQUES
@@ -85,15 +93,13 @@ print("🌍 Calcul géospatial des distances (Transports, Monuments, Hôpitaux).
 RAYON_TERRE_METRES = 6371000
 maisons_rad = np.deg2rad(donnees[['latitude', 'longitude']])
 
-# --- A. Les Transports ---
-for type_transport in stations['type_station'].unique():
-    stations_du_type = stations[stations['type_station'] == type_transport]
-    if len(stations_du_type) > 0:
-        stations_rad = np.deg2rad(stations_du_type[['stop_lat', 'stop_lon']])
-        arbre = BallTree(stations_rad, metric='haversine')
-        distances_rad, _ = arbre.query(maisons_rad, k=1)
-        donnees[f"dist_{type_transport}_m"] = distances_rad * RAYON_TERRE_METRES
-
+# --- A. Les Transports (Global) ---
+if len(stations) > 0:
+    stations_rad = np.deg2rad(stations[['stop_lat', 'stop_lon']])
+    arbre_transport = BallTree(stations_rad, metric='haversine')
+    distances_rad, _ = arbre_transport.query(maisons_rad, k=1)
+    donnees["dist_transport_m"] = distances_rad * RAYON_TERRE_METRES
+    
 # --- B. Les Monuments Historiques ---
 if len(monuments) > 0:
     monuments_rad = np.deg2rad(monuments[['latitude', 'longitude']])
@@ -107,21 +113,78 @@ if len(hopitaux) > 0:
     arbre_hopi = BallTree(hopitaux_rad, metric='haversine')
     distances_rad, _ = arbre_hopi.query(maisons_rad, k=1)
     donnees['dist_hopital_m'] = distances_rad * RAYON_TERRE_METRES
-
 # ==========================================
-# 4. NETTOYAGE ET MATRICE DE CORRÉLATION
+# 4. DATA CLEANSING ET NORMALISATION (Avec Profilage)
 # ==========================================
-print("📈 Génération de la matrice de corrélation finale...")
+print("\n🧹 DÉBUT DU TRAITEMENT DES DONNÉES...")
+temps_total_debut = time.time()
 
-# On retire les prix extrêmes pour ne pas fausser les calculs
-donnees_propres = donnees[(donnees['prix_m2'] >= 1000) & (donnees['prix_m2'] <= 25000)]
+# --- Étape A : GESTION DES VALEURS MANQUANTES ---
+t_debut_etape = time.time()
 
-# On sélectionne toutes les colonnes numériques qui nous intéressent
+colonnes_a_remplir_zero = ['total_commerces'] + colonnes_existantes
+donnees[colonnes_a_remplir_zero] = donnees[colonnes_a_remplir_zero].fillna(0)
+
+colonnes_dpe = ['pct_dpe_A', 'pct_dpe_B', 'pct_dpe_C', 'pct_dpe_D', 'pct_dpe_E', 'pct_dpe_F', 'pct_dpe_G']
+for col in colonnes_dpe:
+    donnees[col] = donnees[col].fillna(donnees[col].median())
+
+t_fin_etape = time.time()
+print(f"✔️ Étape A (Valeurs manquantes) terminée en : {t_fin_etape - t_debut_etape:.4f} sec")
+
+# --- Étape B : FILTRAGE DES OUTLIERS ---
+t_debut_etape = time.time()
+
+donnees_propres = donnees[
+    (donnees['prix_m2'] >= 1000) & (donnees['prix_m2'] <= 25000) & 
+    (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
+].copy()
+
+t_fin_etape = time.time()
+print(f"✔️ Étape B (Filtrage Outliers) terminée en  : {t_fin_etape - t_debut_etape:.4f} sec")
+
+# --- Étape C : TRANSFORMATION LOGARITHMIQUE ---
+t_debut_etape = time.time()
+
+donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
+
+t_fin_etape = time.time()
+print(f"✔️ Étape C (Transformation Log) terminée en : {t_fin_etape - t_debut_etape:.4f} sec")
+
+# --- Étape D : MIN-MAX SCALING ---
+t_debut_etape = time.time()
+
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-colonnes_finales = ['prix_m2', 'surface_reelle_bati', 'score_dpe_moyen', 'total_commerces'] + colonnes_existantes + colonnes_dist
+scaler_minmax = MinMaxScaler()
+donnees_propres[colonnes_dist] = scaler_minmax.fit_transform(donnees_propres[colonnes_dist])
 
-# On calcule la matrice
-matrice_corr = donnees_propres[colonnes_finales].dropna().corr()
+t_fin_etape = time.time()
+print(f"✔️ Étape D (Min-Max Scaling) terminée en    : {t_fin_etape - t_debut_etape:.4f} sec")
+
+# --- Étape E : STANDARDISATION Z-SCORE ---
+t_debut_etape = time.time()
+
+colonnes_a_standardiser = ['surface_reelle_bati', 'total_commerces']
+scaler_standard = StandardScaler()
+donnees_propres[colonnes_a_standardiser] = scaler_standard.fit_transform(donnees_propres[colonnes_a_standardiser])
+
+t_fin_etape = time.time()
+print(f"✔️ Étape E (Standardisation) terminée en    : {t_fin_etape - t_debut_etape:.4f} sec")
+
+# --- Étape F : MATRICE DE CORRÉLATION ---
+t_debut_etape = time.time()
+
+colonnes_finales = ['log_prix_m2', 'surface_reelle_bati'] + colonnes_dpe + ['total_commerces'] + colonnes_dist
+matrice_corr = donnees_propres[colonnes_finales].corr()
+
+t_fin_etape = time.time()
+print(f"✔️ Étape F (Calcul Matrice) terminée en     : {t_fin_etape - t_debut_etape:.4f} sec")
+
+# --- BILAN ---
+temps_total_fin = time.time()
+print("-" * 50)
+print(f"🏁 TEMPS TOTAL DU PROCESSUS : {temps_total_fin - temps_total_debut:.4f} secondes.")
+print("-" * 50)
 
 # ==========================================
 # 5. AFFICHAGE DU GRAPHIQUE
