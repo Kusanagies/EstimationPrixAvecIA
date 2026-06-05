@@ -19,7 +19,7 @@ DB = 'EstimationIA'
 chaine_connexion = f"mysql+pymysql://{USER}:{PASSWORD}@{HOTE}:{PORT}/{DB}"
 moteur = create_engine(chaine_connexion)
 
-print("📥 Téléchargement des données depuis les 6 tables SQL...")
+print("📥 Téléchargement des données depuis les 7 tables SQL...")
 
 # 1. IMMOBILIER (DVF)
 # Modifier les requetes pour faire une recherche sur d'autre ville/région
@@ -56,7 +56,6 @@ WHERE LEFT(departement_commune, 2) IN ('75', '77', '78', '91', '92', '93', '94',
 """
 commerces = pd.read_sql(requete_commerces, con=moteur)
 
-# 4. TRANSPORTS
 # 4. TRANSPORTS (Version simplifiée sans type_station)
 requete_transports = "SELECT stop_lat, stop_lon FROM donnees_transport WHERE stop_lat IS NOT NULL;"
 stations = pd.read_sql(requete_transports, con=moteur)
@@ -68,6 +67,10 @@ monuments = pd.read_sql(requete_monuments, con=moteur)
 # 6. HÔPITAUX
 requete_hopitaux = "SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND longitude IS NOT NULL;"
 hopitaux = pd.read_sql(requete_hopitaux, con=moteur)
+
+# 7. UNIVERSITÉS
+requete_univ = "SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL;"
+universites = pd.read_sql(requete_univ, con=moteur)
 
 # ==========================================
 # 2. FUSION DES DONNÉES COMMUNALES (DVF + Commerces + DPE)
@@ -113,6 +116,21 @@ if len(hopitaux) > 0:
     arbre_hopi = BallTree(hopitaux_rad, metric='haversine')
     distances_rad, _ = arbre_hopi.query(maisons_rad, k=1)
     donnees['dist_hopital_m'] = distances_rad * RAYON_TERRE_METRES
+
+# --- D. Les Universités ---
+if len(universites) > 0:
+    univ_rad = np.deg2rad(universites[['latitude', 'longitude']])
+    arbre_univ = BallTree(univ_rad, metric='haversine')
+    
+    # On cherche l'université la plus proche et on récupère la distance ET l'index
+    distances_rad, index_univ = arbre_univ.query(maisons_rad, k=1)
+    
+    donnees['dist_universite_m'] = distances_rad * RAYON_TERRE_METRES
+    
+    # ASTUCE PRO : On récupère aussi la taille de cette université !
+    # Une fac de 30 000 étudiants n'a pas le même impact sur le quartier qu'une annexe de 200 étudiants
+    donnees['volume_etudiants_proche'] = universites.iloc[index_univ.flatten()]['nombre_etudiants'].values
+
 # ==========================================
 # 4. DATA CLEANSING ET NORMALISATION (Avec Profilage)
 # ==========================================
@@ -174,7 +192,7 @@ print(f"✔️ Étape E (Standardisation) terminée en    : {t_fin_etape - t_deb
 # --- Étape F : MATRICE DE CORRÉLATION ---
 t_debut_etape = time.time()
 
-colonnes_finales = ['log_prix_m2', 'surface_reelle_bati'] + colonnes_dpe + ['total_commerces'] + colonnes_dist
+colonnes_finales = ['log_prix_m2', 'surface_reelle_bati'] + colonnes_dpe + ['total_commerces'] + colonnes_dist 
 matrice_corr = donnees_propres[colonnes_finales].corr()
 
 t_fin_etape = time.time()
