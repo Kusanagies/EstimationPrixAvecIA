@@ -13,3 +13,22 @@ Pour lancer un script :
 
 Pour "lancer" les fichiers html pour la visualisation des cartes : 
 > xdg-open {nomdufichier}.html
+
+Liens vers les données : 
+https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur 
+
+https://www.data.gouv.fr/datasets/base-adresse-nationale
+
+https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf
+
+https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees
+
+https://www.data.gouv.fr/datasets/dpe-logements-existants-depuis-juillet-2021
+
+https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres
+
+https://www.data.gouv.fr/datasets/effectifs-d-etudiants-inscrits-dans-les-etablissements-et-les-formations-de-l-enseignement-superieur
+
+https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non
+
+https://www.data.gouv.fr/datasets/localisation-des-hopitaux-dans-openstreetmap

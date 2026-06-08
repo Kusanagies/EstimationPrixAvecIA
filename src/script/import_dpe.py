@@ -36,7 +36,14 @@ colonnes_a_garder = [
     'etiquette_dpe',
     'etiquette_ges',
     'cout_total_5_usages',
-    'type_energie_principale_chauffage'
+    'type_energie_principale_chauffage',
+    'type_installation_chauffage',
+    'numero_voie_ban',
+    'nom_rue_ban',
+    'adresse_complete_brut',
+    'nom_commune_ban',
+    'adresse_ban',
+    'identifiant_ban'
 ]
 
 print("Initialisation de l'importation nationale (Mode Chunking)...")
