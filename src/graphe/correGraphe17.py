@@ -10,20 +10,20 @@ from sqlalchemy import create_engine
 # ==========================================
 # 1. CONNEXION MYSQL ET TÉLÉCHARGEMENT
 # ==========================================
-print("\n📥 DÉBUT DU TÉLÉCHARGEMENT DES DONNÉES (CIBLE : HÉRAULT 34)...")
+print("\n📥 DÉBUT DU TÉLÉCHARGEMENT DES DONNÉES (CIBLE : 17)...")
 temps_total_debut = time.time()
 
 moteur = create_engine("mysql+pymysql://root:1618@localhost:3306/EstimationIA")
 
-# 1. IMMOBILIER (DVF) - Uniquement Hérault (34)
+# 1. IMMOBILIER (DVF) - Uniquement  (17)
 maisons = pd.read_sql("""
     SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
-      AND LEFT(code_commune, 2) = '34';
+      AND LEFT(code_commune, 2) = '17';
 """, con=moteur)
 
-# 2. DPE - Uniquement Hérault (34)
+# 2. DPE - Uniquement (17)
 dpe = pd.read_sql("""
     SELECT code_insee_ban, 
            (SUM(CASE WHEN etiquette_dpe = 'A' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_A,
@@ -35,7 +35,7 @@ dpe = pd.read_sql("""
            (SUM(CASE WHEN etiquette_dpe = 'G' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_G
     FROM dpe_logements_france
     WHERE etiquette_dpe IN ('A','B','C','D','E','F','G')
-      AND LEFT(code_insee_ban, 2) = '34'
+      AND LEFT(code_insee_ban, 2) = '17'
     GROUP BY code_insee_ban;
 """, con=moteur)
 
@@ -46,25 +46,25 @@ stations = pd.read_sql("""
       AND stop_lon BETWEEN 2.5 AND 4.3;
 """, con=moteur)
 
-# 4. MONUMENTS HISTORIQUES - Uniquement Hérault (34)
+# 4. MONUMENTS HISTORIQUES - Uniquement (17)
 monuments = pd.read_sql("""
     SELECT latitude, longitude FROM monuments_historiques 
     WHERE latitude IS NOT NULL 
-      AND LEFT(code_insee, 2) = '34';
+      AND LEFT(code_insee, 2) = '17';
 """, con=moteur)
 
-# 5. HÔPITAUX - Uniquement Hérault (34)
+# 5. HÔPITAUX - Uniquement Hérault (17)
 hopitaux = pd.read_sql("""
     SELECT latitude, longitude FROM infrastructures_hopitaux 
     WHERE latitude IS NOT NULL 
-      AND LEFT(code_postal, 2) = '34';
+      AND LEFT(code_postal, 2) = '17';
 """, con=moteur)
 
-# 6. UNIVERSITÉS - Uniquement Hérault (34)
+# 6. UNIVERSITÉS - Uniquement (17)
 universites = pd.read_sql("""
     SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites 
     WHERE latitude IS NOT NULL 
-      AND LEFT(code_insee, 2) = '34';
+      AND LEFT(code_insee, 2) = '17';
 """, con=moteur)
 
 print(f"✔️ Données extraites en {time.time() - temps_total_debut:.2f} secondes.")
@@ -91,7 +91,6 @@ def calculer_distance_min(df_points, nom_colonne):
         # Utilisation de .flatten() pour garantir le format de la colonne
         donnees[nom_colonne] = dist_rad.flatten() * RAYON_TERRE_METRES
 
-calculer_distance_min(stations, 'dist_transport_m')
 calculer_distance_min(monuments, 'dist_monument_m')
 calculer_distance_min(hopitaux, 'dist_hopital_m')
 
@@ -144,7 +143,7 @@ if colonnes_standard:
 # ==========================================
 # 5. MATRICE DE CORRÉLATION ET AFFICHAGE
 # ==========================================
-print("📈 Génération de la Matrice 34...")
+print("📈 Génération de la Matrice 17...")
 
 # On assemble proprement la liste finale sans doublons
 colonnes_finales = ['log_prix_m2'] + colonnes_dpe + colonnes_standard + colonnes_dist
@@ -155,7 +154,7 @@ masque = np.triu(np.ones_like(matrice_corr, dtype=bool))
 
 sns.heatmap(matrice_corr, mask=masque, annot=True, cmap='RdYlGn', vmin=-1, vmax=1, fmt=".2f", linewidths=0.5, annot_kws={"size": 9})
 
-plt.title("Master Dataset Hérault (34) : Immobilier, DPE et Infrastructures", fontsize=16, pad=20)
+plt.title("Master Dataset Hérault (17) : Immobilier, DPE et Infrastructures", fontsize=16, pad=20)
 plt.xticks(rotation=45, ha='right', fontsize=10)
 plt.yticks(fontsize=10)
 plt.tight_layout()
