@@ -8,7 +8,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
-
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
@@ -16,7 +15,6 @@ print("-" * 50)
 print("INITIALISATION DU MOTEUR D'ESTIMATION IMMOBILIERE")
 print("-" * 50)
 
-# 1. Connexion precoce a la base de donnees pour le menu
 try:
     moteur = create_engine("mysql+pymysql://root:1618@localhost:3306/EstimationIA")
     connexion_test = moteur.connect()
@@ -25,19 +23,25 @@ except Exception as e:
     print("Erreur de connexion a la base MySQL. Verifiez que le serveur est allume.")
     sys.exit()
 
-# 2. Saisie du departement
-departement = input("\nVeuillez saisir le numero du departement (ex: 34, 75, 17) : ").strip()
+# Saisie du departement ou de la France entiere
+departement = input("\nVeuillez saisir le numero du departement (ex: 34, 75) ou 'FRANCE' : ").strip().upper()
 
 if len(departement) < 2:
-    print("Erreur : Le format du departement est invalide.")
+    print("Erreur : Le format de saisie est invalide.")
     sys.exit()
 
-# 3. Interrogation des communes/arrondissements disponibles
-print(f"Recherche des secteurs disponibles pour le {departement}...")
+print(f"Recherche des secteurs disponibles pour : {departement}...")
+
+# Adaptation de la requete de suggestions selon le choix
+if departement == 'FRANCE':
+    condition_dep = "1=1"
+else:
+    condition_dep = f"LEFT(code_commune, 2) = '{departement}'"
+
 query_communes = f"""
-    SELECT code_commune, MAX(nom_commune) as nom_commune, COUNT(*) as volume_ventes
+    SELECT code_commune, MAX(commune) as nom_commune, COUNT(*) as volume_ventes
     FROM valeurs_foncieres
-    WHERE LEFT(code_commune, 2) = '{departement}'
+    WHERE {condition_dep}
       AND type_local IN ('Maison', 'Appartement')
     GROUP BY code_commune
     ORDER BY volume_ventes DESC
@@ -46,35 +50,45 @@ query_communes = f"""
 df_communes = pd.read_sql(query_communes, con=moteur)
 
 if len(df_communes) == 0:
-    print(f"Erreur : Aucune donnee immobiliere trouvee pour le departement {departement}.")
+    print(f"Erreur : Aucune donnee trouvee pour le secteur {departement}.")
     sys.exit()
 
-# 4. Affichage du Top 15 pour aider l'utilisateur
-print(f"\nVoici les secteurs avec le plus de donnees dans le {departement} :")
+print(f"\nVoici les secteurs avec le plus de donnees pour {departement} :")
 for index, row in df_communes.iterrows():
-    # Formatage propre pour que les colonnes soient alignees dans le terminal
     nom = str(row['nom_commune']).ljust(25)[:25] 
     print(f"  - {row['code_commune']} : {nom} ({row['volume_ventes']} ventes)")
 
 print("  - ... (et autres communes)")
 
-# 5. Saisie du choix local
-choix_local = input("\nSaisissez le code INSEE d'un secteur precis (ou tapez 'TOUS' pour le departement complet) : ").strip().upper()
+choix_local = input("\nSaisissez le code INSEE d'un secteur precis (ou tapez 'TOUS' pour le choix initial complet) : ").strip().upper()
 
-# 6. Configuration des filtres SQL dynamiques
-if choix_local == 'TOUS':
-    filtre_dvf = f"LEFT(code_commune, 2) = '{departement}'"
-    filtre_dpe = f"LEFT(code_insee_ban, 2) = '{departement}'"
-    nom_zone = f"Departement {departement}"
+# Configuration des filtres SQL dynamiques globaux et locaux
+if departement == 'FRANCE':
+    if choix_local == 'TOUS':
+        filtre_dvf = "1=1"
+        filtre_dpe = "1=1"
+        dep_infra = "FRANCE"
+        nom_zone = "France Entiere"
+    else:
+        filtre_dvf = f"code_commune = '{choix_local}'"
+        filtre_dpe = f"code_insee_ban = '{choix_local}'"
+        dep_infra = choix_local[:2]
+        nom_zone = f"Secteur {choix_local}"
 else:
-    filtre_dvf = f"code_commune = '{choix_local}'"
-    filtre_dpe = f"code_insee_ban = '{choix_local}'"
-    nom_zone = f"Secteur {choix_local}"
+    if choix_local == 'TOUS':
+        filtre_dvf = f"LEFT(code_commune, 2) = '{departement}'"
+        filtre_dpe = f"LEFT(code_insee_ban, 2) = '{departement}'"
+        dep_infra = departement
+        nom_zone = f"Departement {departement}"
+    else:
+        filtre_dvf = f"code_commune = '{choix_local}'"
+        filtre_dpe = f"code_insee_ban = '{choix_local}'"
+        dep_infra = departement
+        nom_zone = f"Secteur {choix_local}"
 
 print(f"\nLancement de l'apprentissage pour : {nom_zone}")
 print("-" * 50)
 temps_total_debut = time.time()
-
 # ==========================================
 # 1. TELECHARGEMENT DES DONNEES FILTREES
 # ==========================================
@@ -82,7 +96,9 @@ print("Etape 1/6 : Extraction des donnees depuis SQL...")
 
 # 1. Immobilier (DVF) - Filtrage dynamique
 maisons = pd.read_sql(f"""
-    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati, type_local
+    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, 
+           surface_reelle_bati, type_local, nombre_pieces_principales, 
+           YEAR(date_mutation) AS annee_vente
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND {filtre_dvf}
@@ -93,7 +109,7 @@ if len(maisons) == 0:
     print(f"Erreur : Le code INSEE {choix_local} n'existe pas ou ne contient aucune donnee.")
     sys.exit()
 
-# 2. DPE - Filtrage dynamique
+# 2. DPE - Filtrage dynamique et ajout du profil de chauffage
 dpe = pd.read_sql(f"""
     SELECT code_insee_ban, 
            (SUM(CASE WHEN etiquette_dpe = 'A' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_A,
@@ -102,18 +118,33 @@ dpe = pd.read_sql(f"""
            (SUM(CASE WHEN etiquette_dpe = 'D' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_D,
            (SUM(CASE WHEN etiquette_dpe = 'E' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_E,
            (SUM(CASE WHEN etiquette_dpe = 'F' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_F,
-           (SUM(CASE WHEN etiquette_dpe = 'G' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_G
+           (SUM(CASE WHEN etiquette_dpe = 'G' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_G,
+           (SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Électricité%%' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_chauffage_elec,
+           (SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Gaz%%' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_chauffage_gaz,
+           (SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Fioul%%' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_chauffage_fioul,
+           (SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Réseau de Chaleur%%' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_chauffage_urbain
     FROM dpe_logements_france
     WHERE etiquette_dpe IN ('A','B','C','D','E','F','G')
       AND {filtre_dpe}
     GROUP BY code_insee_ban;
 """, con=moteur)
 
-# 3. Infrastructures (On charge large pour le departement, le BallTree fera le tri local)
+# 3. Transports (Toutes les gares de France)
 stations = pd.read_sql("SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur)
-monuments = pd.read_sql(f"SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
-hopitaux = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND LEFT(code_postal, 2) = '{departement}';", con=moteur)
-universites = pd.read_sql(f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
+
+# 4. Monuments, Hopitaux, Universites (Filtrage adaptatif)
+if dep_infra == 'FRANCE':
+    query_monuments = "SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;"
+    query_hopitaux = "SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;"
+    query_universites = "SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL;"
+else:
+    query_monuments = f"SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{dep_infra}';"
+    query_hopitaux = f"SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND LEFT(code_postal, 2) = '{dep_infra}';"
+    query_universites = f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{dep_infra}';"
+
+monuments = pd.read_sql(query_monuments, con=moteur)
+hopitaux = pd.read_sql(query_hopitaux, con=moteur)
+universites = pd.read_sql(query_universites, con=moteur)
 
 # ==========================================
 # 2. FUSION DES DONNEES
@@ -161,6 +192,11 @@ for col in colonnes_dpe:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
+colonnes_chauffage = ['pct_chauffage_elec', 'pct_chauffage_gaz', 'pct_chauffage_fioul', 'pct_chauffage_urbain']
+for col in colonnes_chauffage:
+    if col in donnees.columns:
+        donnees[col] = donnees[col].fillna(donnees[col].median())
+
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 
 # Filtrage securise pour eviter les valeurs extremes
@@ -194,7 +230,8 @@ except ValueError:
 # ==========================================
 print("Etape 5/6 : Separation des donnees (Train/Test Split)...")
 
-features = ['est_maison'] + colonnes_dpe + colonnes_standard + colonnes_dist
+# Definition des variables explicatives (X)
+features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente'] + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
 X = donnees_propres[features]
 y = donnees_propres['log_prix_m2']
 
