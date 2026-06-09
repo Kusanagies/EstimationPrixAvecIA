@@ -15,13 +15,10 @@ Pour "lancer" les fichiers html pour la visualisation des cartes :
 > xdg-open {nomdufichier}.html
 
 Liens vers les données : 
-https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur 
+Pour la France : 
+https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur //Pas utilisé dans la db
 
 https://www.data.gouv.fr/datasets/base-adresse-nationale
-
-https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf
-
-https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees
 
 https://www.data.gouv.fr/datasets/dpe-logements-existants-depuis-juillet-2021
 
@@ -35,4 +32,8 @@ https://www.data.gouv.fr/datasets/localisation-des-hopitaux-dans-openstreetmap
 
 https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non
 
+Pour Paris : 
 https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees
+
+Pour l'IDF : 
+https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf
