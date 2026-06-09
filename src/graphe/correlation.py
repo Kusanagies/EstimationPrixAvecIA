@@ -8,6 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
+import os
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
@@ -16,7 +17,7 @@ print("INITIALISATION DU MOTEUR D'ESTIMATION IMMOBILIERE")
 print("-" * 50)
 
 try:
-    moteur = create_engine("mysql+pymysql://root:1618@localhost:3306/EstimationIA")
+    moteur = create_engine("mysql+pymysql://root:{os.environ['DB_PASS']}@localhost:3306/EstimationIA")
     connexion_test = moteur.connect()
     connexion_test.close()
 except Exception as e:
@@ -101,6 +102,9 @@ maisons = pd.read_sql(f"""
            YEAR(date_mutation) AS annee_vente
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
+      AND nature_mutation = 'Vente'
+      AND nombre_lots <= 1
+      AND nombre_pieces_principales > 0
       AND {filtre_dvf}
       AND type_local IN ('Maison', 'Appartement');
 """, con=moteur)
@@ -182,6 +186,13 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
+arbre_prix = BallTree(maisons_rad,metric='haversine')
+#k = 6 : on prend 6 voisins puis on retire le point lui même
+dist_v,idx_v = arbre_prix.query(maisons_rad,k=6)
+prix_arr = donnees['prix_m2'].values
+voisins = [np.median(prix_arr[row[1:]]) for row in idx_v] # [1:] exclut lui meme
+donnees['prix_m2_voisins'] = voisins
+
 # ==========================================
 # 4. NETTOYAGE ET FEATURE ENGINEERING
 # ==========================================
@@ -208,7 +219,9 @@ donnees_propres = donnees[
 donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
 donnees_propres['est_maison'] = (donnees_propres['type_local'] == 'Maison').astype(int)
 
+# Pas besoin de la normalisation d'après claude pour le XGboost
 # Normalisation (Gestion des erreurs si variance = 0 dans une petite commune)
+"""
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
 if colonnes_dist:
     try:
@@ -224,7 +237,10 @@ try:
     donnees_propres[colonnes_standard] = StandardScaler().fit_transform(donnees_propres[colonnes_standard])
 except ValueError:
     pass
-
+"""
+# La normalisation est remplacé par : 
+colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
+colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche','prix_m2_voisins']
 # ==========================================
 # 5. PREPARATION DES MATRICES POUR L'IA
 # ==========================================
@@ -235,8 +251,15 @@ features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 
 X = donnees_propres[features]
 y = donnees_propres['log_prix_m2']
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# 30% pour le test 70% pour l'entrainement
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
+annee_max = donnees_propres['annee_vente'].max()
+train_mask = donnees_propres['annee_vente'] < annee_max
+test_mask = donnees_propres['annee_vente'] == annee_max
+
+X_train, y_train = X[train_mask], y[train_mask]
+X_test, y_test = X[test_mask], y[test_mask]
 # ==========================================
 # 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
 # ==========================================
@@ -257,7 +280,9 @@ prix_reels_euros = np.exp(y_test)
 prix_predits_euros = np.exp(predictions_log)
 
 mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
-r2 = r2_score(y_test, predictions_log)
+
+r2_log = r2_score(y_test,predictions_log)
+r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
 
 # Affichage du rapport
 print("\n" + "="*50)
