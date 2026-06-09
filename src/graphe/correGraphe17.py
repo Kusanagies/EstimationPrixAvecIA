@@ -40,10 +40,11 @@ dpe = pd.read_sql("""
 """, con=moteur)
 
 # 3. TRANSPORTS - Boîte géographique (Bounding Box) englobant l'Hérault
+#Changer la requete SQL si on veut un autre département.
 stations = pd.read_sql("""
-    SELECT stop_lat, stop_lon FROM donnees_transport 
-    WHERE stop_lat BETWEEN 43.1 AND 44.1 
-      AND stop_lon BETWEEN 2.5 AND 4.3;
+    SELECT latitude, longitude FROM donnees_transport 
+    WHERE latitude BETWEEN 45.1 AND 46.4 
+      AND longitude BETWEEN -1.6 AND -0.1;
 """, con=moteur)
 
 # 4. MONUMENTS HISTORIQUES - Uniquement (17)
@@ -91,6 +92,7 @@ def calculer_distance_min(df_points, nom_colonne):
         # Utilisation de .flatten() pour garantir le format de la colonne
         donnees[nom_colonne] = dist_rad.flatten() * RAYON_TERRE_METRES
 
+calculer_distance_min(stations[['latitude', 'longitude']], 'dist_transport_m')
 calculer_distance_min(monuments, 'dist_monument_m')
 calculer_distance_min(hopitaux, 'dist_hopital_m')
 
@@ -162,5 +164,28 @@ plt.tight_layout()
 print("-" * 50)
 print(f"🏁 PROCESSUS COMPLET TERMINÉ EN : {time.time() - temps_total_debut:.2f} secondes.")
 print("-" * 50)
+
+# ==========================================
+# 6. EXPORT ET AFFICHAGE TEXTE DES RÉSULTATS
+# ==========================================
+print("\n" + "="*50)
+print("📊 TOP DES CORRÉLATIONS AVEC LE PRIX AU M²")
+print("="*50)
+
+# On isole la colonne du prix, on supprime la corrélation avec elle-même (1.0) et on trie
+correlations_prix = matrice_corr['log_prix_m2'].drop('log_prix_m2').sort_values(ascending=False)
+
+print("\n📈 IMPACTS POSITIFS (Font monter le prix) :")
+for index, valeur in correlations_prix[correlations_prix > 0].items():
+    print(f"🔹 {index.ljust(25)} : {valeur:+.3f}")
+
+print("\n📉 IMPACTS NÉGATIFS (Font baisser le prix) :")
+for index, valeur in correlations_prix[correlations_prix < 0].items():
+    print(f"🔻 {index.ljust(25)} : {valeur:+.3f}")
+
+print("\n" + "="*50)
+
+matrice_corr.to_csv("/home/sylvain-huang/Documents/EstimationIA/resultats_correlation.csv", sep=";", decimal=",")
+print("💾 Matrice complète sauvegardée dans 'resultats_correlation.csv'")
 
 plt.show()
