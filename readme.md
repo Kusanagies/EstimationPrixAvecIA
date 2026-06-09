@@ -32,3 +32,7 @@ https://www.data.gouv.fr/datasets/effectifs-d-etudiants-inscrits-dans-les-etabli
 https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non
 
 https://www.data.gouv.fr/datasets/localisation-des-hopitaux-dans-openstreetmap
+
+https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non
+
+https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees

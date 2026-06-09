@@ -17,10 +17,12 @@ moteur = create_engine("mysql+pymysql://root:1618@localhost:3306/EstimationIA")
 
 # 1. IMMOBILIER (DVF) - Uniquement Hérault (49)
 maisons = pd.read_sql("""
-    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati
+    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati, type_local
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
-      AND LEFT(code_commune, 2) = '49';
+      AND LEFT(code_commune, 2) = '49'
+      AND type_local IN ('Maison','Appartement');
+
 """, con=moteur)
 
 # 2. DPE - Uniquement Hérault (49)
@@ -133,6 +135,10 @@ donnees_propres = donnees[
 # C. Transformation Logarithmique du Prix
 donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
 
+# F. Encodage Binaire du Type de Local
+# Si c'est une Maison ça vaut 1, si c'est un Appartement ça vaut 0.
+donnees_propres['est_maison'] = (donnees_propres['type_local'] == 'Maison').astype(int)
+
 # D. Min-Max Scaling (Toutes les distances entre 0 et 1)
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
 if colonnes_dist:
@@ -149,7 +155,7 @@ if colonnes_standard:
 print("📈 Génération de la Matrice 49...")
 
 # On assemble proprement la liste finale sans doublons
-colonnes_finales = ['log_prix_m2'] + colonnes_dpe + colonnes_standard + colonnes_dist
+colonnes_finales = ['log_prix_m2', 'est_maison'] + colonnes_dpe + colonnes_standard + colonnes_dist
 matrice_corr = donnees_propres[colonnes_finales].corr()
 
 plt.figure(figsize=(16, 12))
