@@ -69,8 +69,16 @@ La première ligne avec une autre ligne de donnée : # osm_id, nom_hopital, urge
 
 '38072526', 'Hôpital Bichat-Claude Bernard', 'yes', 'Paris', NULL, '2.3319566083744125', '48.898862750459095'
 
+https://www.data.gouv.fr/datasets/immeubles-proteges-au-titre-des-monuments-historiques-2
+
+Nom dans la db ; merimee.csv 
+
+La première ligne avec une autre ligne de donnée : # id_monument, nom_commune, type_monument, code_insee, siecle, adresse, latitude, longitude
+
+'PA00080241', 'Wy-dit-Joli-Village', 'site archéologique', '95690', 'Antiquité', NULL, '49.1030750412716', '1.83517099965768'
+
 Pour Paris : 
-https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees
+https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees //On n'utilise pas actuellement
 
 Pour l'IDF : 
-https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf
+https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf //On n'utilise pas actuellement
