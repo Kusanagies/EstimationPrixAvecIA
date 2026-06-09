@@ -39,7 +39,7 @@ else:
     condition_dep = f"LEFT(code_commune, 2) = '{departement}'"
 
 query_communes = f"""
-    SELECT code_commune, MAX(commune) as nom_commune, COUNT(*) as volume_ventes
+    SELECT code_commune, MAX(nom_commune) as nom_commune, COUNT(*) as volume_ventes
     FROM valeurs_foncieres
     WHERE {condition_dep}
       AND type_local IN ('Maison', 'Appartement')
