@@ -247,9 +247,12 @@ colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche','prix_m2_v
 print("Etape 5/6 : Separation des donnees (Train/Test Split)...")
 
 # Definition des variables explicatives (X)
-features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente'] + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
+features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente'] \
+           + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
+ 
 X = donnees_propres[features]
 y = donnees_propres['log_prix_m2']
+
 
 # 30% pour le test 70% pour l'entrainement
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
@@ -258,8 +261,13 @@ annee_max = donnees_propres['annee_vente'].max()
 train_mask = donnees_propres['annee_vente'] < annee_max
 test_mask = donnees_propres['annee_vente'] == annee_max
 
-X_train, y_train = X[train_mask], y[train_mask]
-X_test, y_test = X[test_mask], y[test_mask]
+if train_mask.sum() == 0 or test_mask.sum() == 0:
+    print("  (une seule annee disponible -> repli sur split aleatoire)")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+else:
+    X_train, y_train = X[train_mask], y[train_mask]
+    X_test, y_test = X[test_mask], y[test_mask]
+
 # ==========================================
 # 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
 # ==========================================
