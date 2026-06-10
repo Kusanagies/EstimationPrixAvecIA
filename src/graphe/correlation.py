@@ -255,8 +255,6 @@ features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 
 X = donnees_propres[features]
 y = donnees_propres['log_prix_m2']
 
-
-
 annee_max = donnees_propres['annee_vente'].max()
 train_mask = donnees_propres['annee_vente'] < annee_max
 test_mask = donnees_propres['annee_vente'] == annee_max
@@ -272,19 +270,18 @@ else:
 # Les voisins sont cherches uniquement dans le train
 coords_train = np.deg2rad(donnees_propres.loc[X_train.index,['latitude','longitude']])
 prix_train = donnees_propres.loc[X_train.index,'prix_m2'].values
-
 arbre_voisins = BallTree(coords_train,metric='haversine')
 
 # Train : on demande k=6 et on retire le 1er voisin (soi-meme)
-_,idx_tr = arbre_voisins.query(coords_train,k=6)
-voisins_train = [np.median(prix_train[row[1:]]) for row in idx_tr]
+k_train = min(6,len(coords_train))
+_,idx_tr = arbre_voisins.query(coords_train,k=k_train)
+voisins_train = [np.median(prix_train[row[1:]]) if len(row) > 1 else prix_train[row[0]] for row in idx_tr]
 
+k_test = min(5,len(coords_train))
 coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude','longitude']])
-_,idx_te = arbre_voisins.query(coords_test,k=5)
+_,idx_te = arbre_voisins.query(coords_test,k=k_test)
 voisins_test = [np.median(prix_train[row]) for row in idx_te]
 
-X_train = X_train.copy()
-X_test = X_test.copy()
 X_train['prix_m2_voisins'] = voisins_train
 X_test['prix_m2_voisins'] = voisins_test
 
@@ -296,6 +293,7 @@ X_test = X_test[features]
 # ==========================================
 print("Etape 6/6 : Entrainement de l'algorithme XGBoost...")
 
+X_tr, X_val, y_tr,y_val = train_test_split(X_train,y_train, test_size=0.3,random_state = 42)
 modele_xgb = xgb.XGBRegressor(
     n_estimators=2000, learning_rate=0.03, max_depth=6,
     subsample=0.8, colsample_bytree=0.8,
@@ -303,7 +301,7 @@ modele_xgb = xgb.XGBRegressor(
     early_stopping_rounds=50, random_state=42,n_jobs=-1
 )
 
-modele_xgb.fit(X_train, y_train, eval_set=[(X_test,y_test)], verbose = False)
+modele_xgb.fit(X_tr, y_tr, eval_set=[(X_val,y_val)], verbose = False)
 
 predictions_log = modele_xgb.predict(X_test)
 prix_reels_euros = np.exp(y_test)
