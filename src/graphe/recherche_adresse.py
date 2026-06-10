@@ -27,8 +27,6 @@ except Exception as e:
 # ==========================================
 def rechercher_adresse(saisie_utilisateur):
     print("\nRecherche de l'adresse en cours via l'API Gouvernementale...")
-    
-    # Appel à l'API Base Adresse Nationale
     url = f"https://api-adresse.data.gouv.fr/search/?q={saisie_utilisateur}&limit=5"
     
     try:
@@ -60,7 +58,6 @@ adresses_trouvees = rechercher_adresse(saisie)
 if not adresses_trouvees:
     sys.exit()
 
-# Affichage des propositions (Autocomplétion)
 print("\nPlusieurs correspondances trouvées. Veuillez choisir l'adresse exacte :")
 for i, feature in enumerate(adresses_trouvees):
     proprietes = feature["properties"]
@@ -78,32 +75,64 @@ except ValueError:
     print("Choix invalide. Fin du programme.")
     sys.exit()
 
-# Extraction des données géographiques du choix
+# Extraction des donnees de l'API BAN
 adresse_selectionnee = adresses_trouvees[index_choix]
 props = adresse_selectionnee["properties"]
 coords = adresse_selectionnee["geometry"]["coordinates"]
 
 label_complet = props.get("label")
-code_insee = props.get("citycode")  # Gère automatiquement les arrondissements
+code_insee = props.get("citycode")
 longitude = coords[0]
 latitude = coords[1]
+id_ban = props.get("id") # L'identifiant unique de la porte
+
+# Recuperation du nom de la rue pour la recherche de zone
+type_adresse = props.get("type")
+if type_adresse == "street":
+    rue = props.get("name", "")
+else:
+    rue = props.get("street", props.get("name", ""))
+
+# Echappement des apostrophes pour eviter les bugs SQL (ex: "d'Abbans" -> "d''Abbans")
+rue_sql = rue.replace("'", "''")
 
 print("\n" + "=" * 50)
 print(f"ADRESSE VALIDÉE : {label_complet}")
+print(f"ID BAN          : {id_ban}")
 print(f"Coordonnées GPS : Lat {latitude:.5f}, Lon {longitude:.5f}")
-print(f"Code INSEE/Secteur : {code_insee}")
 print("=" * 50)
 
 # ==========================================
-# 4. APPROXIMATION DPE ET CHAUFFAGE (SQL)
+# 4. RECHERCHE EXACTE (L'ADRESSE)
 # ==========================================
-print("\nInterrogation de la base de données pour le profilage du secteur...")
+print("\nRecherche d'un diagnostic exact pour cette adresse...")
 
-query_profilage = f"""
+# On cherche si le batiment exact possede un DPE via son ID BAN
+query_exacte = f"""
+    SELECT etiquette_dpe, type_energie_principale_chauffage, date_etablissement_dpe
+    FROM dpe_logements_france
+    WHERE identifiant_ban = '{id_ban}'
+    ORDER BY date_etablissement_dpe DESC
+    LIMIT 1;
+"""
+df_exact = pd.read_sql(query_exacte, con=moteur)
+
+if len(df_exact) > 0:
+    print("\n🎯 MATCH EXACT TROUVÉ DANS LA BASE ADEME !")
+    print(f"-> DPE du bien       : {df_exact.iloc[0]['etiquette_dpe']}")
+    print(f"-> Chauffage du bien : {df_exact.iloc[0]['type_energie_principale_chauffage']}")
+    print(f"-> Date du DPE       : {df_exact.iloc[0]['date_etablissement_dpe']}")
+else:
+    print("❌ Aucun diagnostic exact trouvé pour ce bâtiment spécifique.")
+
+# ==========================================
+# 5. RECHERCHE DE ZONE (LA RUE / LE VOISINAGE)
+# ==========================================
+print(f"\nCalcul du profil énergétique de la micro-zone (Rue : {rue})...")
+
+query_zone = f"""
     SELECT 
         COUNT(*) as total_diagnostics,
-        
-        -- Calcul du DPE dominant
         SUM(CASE WHEN etiquette_dpe = 'A' THEN 1 ELSE 0 END) AS nb_A,
         SUM(CASE WHEN etiquette_dpe = 'B' THEN 1 ELSE 0 END) AS nb_B,
         SUM(CASE WHEN etiquette_dpe = 'C' THEN 1 ELSE 0 END) AS nb_C,
@@ -111,46 +140,43 @@ query_profilage = f"""
         SUM(CASE WHEN etiquette_dpe = 'E' THEN 1 ELSE 0 END) AS nb_E,
         SUM(CASE WHEN etiquette_dpe = 'F' THEN 1 ELSE 0 END) AS nb_F,
         SUM(CASE WHEN etiquette_dpe = 'G' THEN 1 ELSE 0 END) AS nb_G,
-        
-        -- Calcul du Chauffage dominant
         SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Électricité%%' THEN 1 ELSE 0 END) AS ch_elec,
         SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Gaz%%' THEN 1 ELSE 0 END) AS ch_gaz,
         SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Fioul%%' THEN 1 ELSE 0 END) AS ch_fioul,
         SUM(CASE WHEN type_energie_principale_chauffage LIKE '%%Réseau de Chaleur%%' THEN 1 ELSE 0 END) AS ch_urbain
     FROM dpe_logements_france
-    WHERE code_insee_ban = '{code_insee}';
+    WHERE code_insee_ban = '{code_insee}'
+      AND adresse_ban LIKE '%%{rue_sql}%%';
 """
 
-df_profil = pd.read_sql(query_profilage, con=moteur)
+df_zone = pd.read_sql(query_zone, con=moteur)
 
-if len(df_profil) == 0 or df_profil['total_diagnostics'].iloc[0] == 0:
-    print("Données insuffisantes dans ce secteur pour établir une approximation énergétique.")
+if len(df_zone) == 0 or df_zone['total_diagnostics'].iloc[0] == 0:
+    print(f"Données insuffisantes dans cette rue pour établir une approximation.")
 else:
-    donnees_secteur = df_profil.iloc[0]
-    total = donnees_secteur['total_diagnostics']
+    donnees_zone = df_zone.iloc[0]
+    total = donnees_zone['total_diagnostics']
     
-    # Recherche de la lettre DPE avec le plus grand nombre
     dpes = {
-        'A': donnees_secteur['nb_A'], 'B': donnees_secteur['nb_B'], 
-        'C': donnees_secteur['nb_C'], 'D': donnees_secteur['nb_D'], 
-        'E': donnees_secteur['nb_E'], 'F': donnees_secteur['nb_F'], 
-        'G': donnees_secteur['nb_G']
+        'A': donnees_zone['nb_A'], 'B': donnees_zone['nb_B'], 
+        'C': donnees_zone['nb_C'], 'D': donnees_zone['nb_D'], 
+        'E': donnees_zone['nb_E'], 'F': donnees_zone['nb_F'], 
+        'G': donnees_zone['nb_G']
     }
     dpe_dominant = max(dpes, key=dpes.get)
     pourcentage_dpe = (dpes[dpe_dominant] / total) * 100
     
-    # Recherche du chauffage dominant
     chauffages = {
-        'Électrique': donnees_secteur['ch_elec'],
-        'Gaz': donnees_secteur['ch_gaz'],
-        'Fioul': donnees_secteur['ch_fioul'],
-        'Réseau Urbain': donnees_secteur['ch_urbain']
+        'Électrique': donnees_zone['ch_elec'],
+        'Gaz': donnees_zone['ch_gaz'],
+        'Fioul': donnees_zone['ch_fioul'],
+        'Réseau Urbain': donnees_zone['ch_urbain']
     }
     chauffage_dominant = max(chauffages, key=chauffages.get)
     pourcentage_chauffage = (chauffages[chauffage_dominant] / total) * 100
 
-    print(f"\nPROFIL ÉNERGÉTIQUE APPROXIMATIF (Basé sur {total} diagnostics locaux) :")
+    print(f"\nPROFIL DE LA RUE (Basé sur {total} diagnostics voisins) :")
     print("-" * 50)
-    print(f"-> DPE le plus probable       : {dpe_dominant} (Concerne {pourcentage_dpe:.1f}% des biens du secteur)")
-    print(f"-> Type de Chauffage dominant : {chauffage_dominant} (Concerne {pourcentage_chauffage:.1f}% des biens du secteur)")
+    print(f"-> Tendance DPE Quartier       : {dpe_dominant} ({pourcentage_dpe:.1f}% des biens de la rue)")
+    print(f"-> Tendance Chauffage Quartier : {chauffage_dominant} ({pourcentage_chauffage:.1f}% des biens de la rue)")
     print("-" * 50)

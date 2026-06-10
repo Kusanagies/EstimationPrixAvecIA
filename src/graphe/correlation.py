@@ -311,4 +311,3 @@ print(f"R2 (euros / m2)                    : {r2_euros * 100:.2f} %")
 print(f"Erreur absolue moyenne (MAE)             : {mae:.2f} EUR / m2")
 print("="*50)
 print(f"Temps de traitement global : {time.time() - temps_total_debut:.2f} secondes.\n")
-
