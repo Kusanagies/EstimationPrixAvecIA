@@ -27,6 +27,7 @@ try:
     connexion_test.close()
 except KeyError :
     print("Erreur : variable DB_PASS introuvable. Verifiez votre fichier .env à la racine")
+    sys.exit()
 except Exception as e:
     print("Erreur de connexion a la base MySQL. Verifiez que le serveur est allume.")
     sys.exit()
@@ -193,12 +194,6 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
-arbre_prix = BallTree(maisons_rad,metric='haversine')
-#k = 6 : on prend 6 voisins puis on retire le point lui même
-dist_v,idx_v = arbre_prix.query(maisons_rad,k=6)
-prix_arr = donnees['prix_m2'].values
-voisins = [np.median(prix_arr[row[1:]]) for row in idx_v] # [1:] exclut lui meme
-donnees['prix_m2_voisins'] = voisins
 
 # ==========================================
 # 4. NETTOYAGE ET FEATURE ENGINEERING
@@ -247,7 +242,7 @@ except ValueError:
 """
 # La normalisation est remplacé par : 
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche','prix_m2_voisins']
+colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche']
 # ==========================================
 # 5. PREPARATION DES MATRICES POUR L'IA
 # ==========================================
@@ -261,8 +256,6 @@ X = donnees_propres[features]
 y = donnees_propres['log_prix_m2']
 
 
-# 30% pour le test 70% pour l'entrainement
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
 annee_max = donnees_propres['annee_vente'].max()
 train_mask = donnees_propres['annee_vente'] < annee_max
@@ -275,20 +268,42 @@ else:
     X_train, y_train = X[train_mask], y[train_mask]
     X_test, y_test = X[test_mask], y[test_mask]
 
+# Calcule propre de prix_m2_voisins (sans leakage)
+# Les voisins sont cherches uniquement dans le train
+coords_train = np.deg2rad(donnees_propres.loc[X_train.index,['latitude','longitude']])
+prix_train = donnees_propres.loc[X_train.index,'prix_m2'].values
+
+arbre_voisins = BallTree(coords_train,metric='haversine')
+
+# Train : on demande k=6 et on retire le 1er voisin (soi-meme)
+_,idx_tr = arbre_voisins.query(coords_train,k=6)
+voisins_train = [np.median(prix_train[row[1:]]) for row in idx_tr]
+
+coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude','longitude']])
+_,idx_te = arbre_voisins.query(coords_test,k=5)
+voisins_test = [np.median(prix_train[row]) for row in idx_te]
+
+X_train = X_train.copy()
+X_test = X_test.copy()
+X_train['prix_m2_voisins'] = voisins_train
+X_test['prix_m2_voisins'] = voisins_test
+
+features = features + ['prix_m2_voisins']
+X_train = X_train[features]
+X_test = X_test[features]
 # ==========================================
 # 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
 # ==========================================
 print("Etape 6/6 : Entrainement de l'algorithme XGBoost...")
 
 modele_xgb = xgb.XGBRegressor(
-    n_estimators=500,
-    learning_rate=0.05,
-    max_depth=6,
-    random_state=42,
-    n_jobs=-1
+    n_estimators=2000, learning_rate=0.03, max_depth=6,
+    subsample=0.8, colsample_bytree=0.8,
+    min_child_weight=3, reg_lambda=1.0,
+    early_stopping_rounds=50, random_state=42,n_jobs=-1
 )
 
-modele_xgb.fit(X_train, y_train)
+modele_xgb.fit(X_train, y_train, eval_set=[(X_test,y_test)], verbose = False)
 
 predictions_log = modele_xgb.predict(X_test)
 prix_reels_euros = np.exp(y_test)
