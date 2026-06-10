@@ -3,7 +3,6 @@ import sys
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
@@ -107,7 +106,8 @@ print("Etape 1/6 : Extraction des donnees depuis SQL...")
 maisons = pd.read_sql(f"""
     SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, 
            surface_reelle_bati, type_local, nombre_pieces_principales, 
-           YEAR(date_mutation) AS annee_vente
+           YEAR(date_mutation) AS annee_vente,
+           MONTH(date_mutation) AS mois_vente
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND nature_mutation = 'Vente'
@@ -220,6 +220,8 @@ donnees_propres = donnees[
 
 donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
 donnees_propres['est_maison'] = (donnees_propres['type_local'] == 'Maison').astype(int)
+donnees_propres['log_surface'] = np.log(donnees_propres['surface_reelle_bati'])
+donnees_propres['surface_par_piece'] = donnees_propres['surface_reelle_bati'] / donnees_propres['nombre_pieces_principales']
 
 # Pas besoin de la normalisation d'après claude pour le XGboost
 # Normalisation (Gestion des erreurs si variance = 0 dans une petite commune)
@@ -242,14 +244,14 @@ except ValueError:
 """
 # La normalisation est remplacé par : 
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche']
+colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche','log_surface','surface_par_piece']
 # ==========================================
 # 5. PREPARATION DES MATRICES POUR L'IA
 # ==========================================
 print("Etape 5/6 : Separation des donnees (Train/Test Split)...")
 
 # Definition des variables explicatives (X)
-features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente'] \
+features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente','mois_vente'] \
            + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
  
 X = donnees_propres[features]
@@ -273,19 +275,28 @@ prix_train = donnees_propres.loc[X_train.index,'prix_m2'].values
 arbre_voisins = BallTree(coords_train,metric='haversine')
 
 # Train : on demande k=6 et on retire le 1er voisin (soi-meme)
-k_train = min(6,len(coords_train))
+k_train = min(16,len(coords_train))
 _,idx_tr = arbre_voisins.query(coords_train,k=k_train)
 voisins_train = [np.median(prix_train[row[1:]]) if len(row) > 1 else prix_train[row[0]] for row in idx_tr]
 
-k_test = min(5,len(coords_train))
+k_test = min(15,len(coords_train))
 coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude','longitude']])
 _,idx_te = arbre_voisins.query(coords_test,k=k_test)
 voisins_test = [np.median(prix_train[row]) for row in idx_te]
 
+rayon_rad = 1000 / RAYON_TERRE_METRES
+dens_train = arbre_voisins.query_radius(coords_train,r=rayon_rad,count_only=True)
+dens_test = arbre_voisins.query_radius(coords_test,r=rayon_rad,count_only=True)
+X_train['densite_ventes_1km'] = dens_train
+X_test['densite_ventes_1km'] = dens_test
+features = features + ['densite_ventes_1km']
+X_train = X_train[features]
+X_test = X_test[features]
+
 X_train['prix_m2_voisins'] = voisins_train
 X_test['prix_m2_voisins'] = voisins_test
 
-features = features + ['prix_m2_voisins']
+features = list(dict.fromkeys(features))
 X_train = X_train[features]
 X_test = X_test[features]
 # ==========================================
@@ -295,7 +306,7 @@ print("Etape 6/6 : Entrainement de l'algorithme XGBoost...")
 
 X_tr, X_val, y_tr,y_val = train_test_split(X_train,y_train, test_size=0.3,random_state = 42)
 modele_xgb = xgb.XGBRegressor(
-    n_estimators=2000, learning_rate=0.03, max_depth=6,
+    n_estimators=2000, learning_rate=0.02, max_depth=6,
     subsample=0.8, colsample_bytree=0.8,
     min_child_weight=3, reg_lambda=1.0,
     early_stopping_rounds=50, random_state=42,n_jobs=-1
