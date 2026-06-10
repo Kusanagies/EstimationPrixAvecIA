@@ -106,6 +106,7 @@ print("Etape 1/6 : Extraction des donnees depuis SQL...")
 maisons = pd.read_sql(f"""
     SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, 
            surface_reelle_bati, type_local, nombre_pieces_principales, 
+           surface_terrain,
            YEAR(date_mutation) AS annee_vente,
            MONTH(date_mutation) AS mois_vente
     FROM valeurs_foncieres
@@ -211,6 +212,7 @@ for col in colonnes_chauffage:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
+donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
 # Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
@@ -222,6 +224,8 @@ donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
 donnees_propres['est_maison'] = (donnees_propres['type_local'] == 'Maison').astype(int)
 donnees_propres['log_surface'] = np.log(donnees_propres['surface_reelle_bati'])
 donnees_propres['surface_par_piece'] = donnees_propres['surface_reelle_bati'] / donnees_propres['nombre_pieces_principales']
+donnees_propres['a_terrain'] = (donnees_propres['surface_terrain']>0).astype(int)
+donnees_propres['log_terrain'] = np.log1p(donnees_propres['surface_terrain'])
 
 # Pas besoin de la normalisation d'après claude pour le XGboost
 # Normalisation (Gestion des erreurs si variance = 0 dans une petite commune)
@@ -244,14 +248,16 @@ except ValueError:
 """
 # La normalisation est remplacé par : 
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche','log_surface','surface_par_piece']
+colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche',
+                     'log_surface','surface_par_piece',
+                     'surface_terrain','log_terrain']
 # ==========================================
 # 5. PREPARATION DES MATRICES POUR L'IA
 # ==========================================
 print("Etape 5/6 : Separation des donnees (Train/Test Split)...")
 
 # Definition des variables explicatives (X)
-features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente','mois_vente'] \
+features = ['est_maison', 'latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente','mois_vente','a_terrain'] \
            + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
  
 X = donnees_propres[features]
