@@ -9,6 +9,8 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
@@ -16,10 +18,15 @@ print("-" * 50)
 print("INITIALISATION DU MOTEUR D'ESTIMATION IMMOBILIERE")
 print("-" * 50)
 
+RACINE_PROJET = Path(__file__).resolve().parents[2]
+load_dotenv(RACINE_PROJET / ".env")
 try:
-    moteur = create_engine("mysql+pymysql://root:{os.environ['DB_PASS']}@localhost:3306/EstimationIA")
+    db_pass = os.environ["DB_PASS"]
+    moteur = create_engine(f"mysql+pymysql://root:{db_pass}@localhost:3306/EstimationIA")
     connexion_test = moteur.connect()
     connexion_test.close()
+except KeyError :
+    print("Erreur : variable DB_PASS introuvable. Verifiez votre fichier .env à la racine")
 except Exception as e:
     print("Erreur de connexion a la base MySQL. Verifiez que le serveur est allume.")
     sys.exit()
@@ -299,7 +306,8 @@ print("="*50)
 print(f"Nombre de logements pour l'apprentissage : {len(X_train)}")
 print(f"Nombre de logements pour la validation   : {len(X_test)}")
 print("-" * 50)
-print(f"Coefficient de determination (R2)        : {r2 * 100:.2f} %")
+print(f"R2 (espace log)                    : {r2_log * 100:.2f} %")
+print(f"R2 (euros / m2)                    : {r2_euros * 100:.2f} %")
 print(f"Erreur absolue moyenne (MAE)             : {mae:.2f} EUR / m2")
 print("="*50)
 print(f"Temps de traitement global : {time.time() - temps_total_debut:.2f} secondes.\n")
