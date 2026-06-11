@@ -68,11 +68,20 @@ hopitaux = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_hopitau
 # 6. UNIVERSITES
 universites = pd.read_sql(f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
 
+# 7. REVENUS INSEE (Filosofi) par commune
+revenus = pd.read_sql(f"""SELECT code_commune,median_revenu_disponible,indice_gini,pct_minima_sociaux 
+                      FROM demographie_communes
+                      WHERE LEFT(code_commune,2) = '{departement}';
+""",con=moteur)
+
+for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']: revenus[col] = pd.to_numeric(revenus[col],errors='coerce')
+
 # ==========================================
 # 2. FUSION DES DONNEES
 # ==========================================
 print("Etape 2/6 : Fusion des donnees communales...")
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
+donnees = pd.merge(donnees,revenus, on='code_commune',how='left')
 
 # ==========================================
 # 3. CALCULS SPATIAUX (BallTree)
@@ -116,6 +125,11 @@ for col in colonnes_dpe:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
+colonnes_revenus = ['median_revenu_disponible','indice_gini','pct_minima_sociaux']
+for col in colonnes_revenus: 
+    if col in donnees.columns: 
+        donnees[col] = donnees[col].fillna(donnees[col].median())
+
 # Filtrage des valeurs aberrantes (Fourchette adaptee a la majorite de la France)
 donnees_propres = donnees[
     (donnees['prix_m2'] >= 500) & (donnees['prix_m2'] <= 15000) & 
@@ -143,7 +157,7 @@ if colonnes_standard:
 # 5. MATRICE DE CORRELATION
 # ==========================================
 print("Etape 5/6 : Calcul de la matrice de correlation...")
-colonnes_finales = ['log_prix_m2', 'est_maison'] + colonnes_dpe + colonnes_standard + colonnes_dist
+colonnes_finales = ['log_prix_m2', 'est_maison','prix_m2'] + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
 
 # Filtrage pour ne garder que les colonnes qui existent et qui ne sont pas constantes
 colonnes_valides = [col for col in colonnes_finales if col in donnees_propres.columns and donnees_propres[col].nunique() > 1]
@@ -172,6 +186,22 @@ print(f"Temps total d'execution : {time.time() - temps_total_debut:.2f} secondes
 
 # Generation du graphe
 plt.figure(figsize=(16, 12))
+
+# =========================
+# EXPORT CSV
+# ========================
+# 1. La matrice de correlation complete
+nom_fichier_matrice = f"matrice_correlation_dep_{departement}.csv"
+matrice_corr.to_csv(nom_fichier_matrice,sep=';',decimal=',',encoding='utf-8-sig')
+
+# 2. Le classement des correlations avec le prix (plus lisible)
+nom_fichier_top = f"correlation_prix_dep_{departement}.csv"
+correlations_prix.to_csv(nom_fichier_top,sep=';',decimal=',',
+                         header=['correlation_avec_log_prix'],encoding='utf-8-sig')
+print(f"\nFichiers CSV génerés : ")
+print(f" - {nom_fichier_matrice}")
+print(f" - {nom_fichier_top}")
+
 masque = np.triu(np.ones_like(matrice_corr, dtype=bool))
 sns.heatmap(matrice_corr, mask=masque, annot=True, cmap='RdYlGn', vmin=-1, vmax=1, fmt=".2f", linewidths=0.5, annot_kws={"size": 9})
 plt.title(f"Master Dataset - Departement {departement}", fontsize=16, pad=20)

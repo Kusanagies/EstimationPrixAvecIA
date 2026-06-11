@@ -2,3 +2,4 @@ env/
 data/
 carte/
 .env
+out/
