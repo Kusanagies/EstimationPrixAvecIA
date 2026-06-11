@@ -159,12 +159,28 @@ monuments = pd.read_sql(query_monuments, con=moteur)
 hopitaux = pd.read_sql(query_hopitaux, con=moteur)
 universites = pd.read_sql(query_universites, con=moteur)
 
+if dep_infra == 'FRANCE':
+    filtre_rev = "1=1"
+elif choix_local != 'TOUS' and len(choix_local) == 5:
+    filtre_rev = f"code_commune = '{choix_local}'"
+else : 
+    filtre_rev = f"LEFT(code_commune,2) = '{dep_infra}'"
+
+revenus = pd.read_sql(f"""
+                        SELECT code_commune, median_revenu_disponible,indice_gini,pct_minima_sociaux
+                        FROM demographie_communes
+                        WHERE {filtre_rev};
+                    """,con=moteur)
+
+for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
+    revenus[col] = pd.to_numeric(revenus[col],errors='coerce')
+
 # ==========================================
 # 2. FUSION DES DONNEES
 # ==========================================
 print("Etape 2/6 : Fusion des tables...")
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
-
+donnees = pd.merge(donnees,revenus,on='code_commune',how='left')
 # ==========================================
 # 3. CALCULS SPATIAUX (BallTree)
 # ==========================================
@@ -246,11 +262,20 @@ try:
 except ValueError:
     pass
 """
+
+colonnes_revenus = ['median_revenu_disponible','indice_gini','pct_minima_sociaux']
+for col in colonnes_revenus:
+    if col in donnees.columns:
+        donnees[col] = donnees[col].fillna(donnees[col].median())
+
 # La normalisation est remplacé par : 
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
 colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche',
                      'log_surface','surface_par_piece',
-                     'surface_terrain','log_terrain']
+                     'surface_terrain','log_terrain',
+                     'median_revenu_disponible','indice_gini','pct_minima_sociaux']
+
+
 # ==========================================
 # 5. PREPARATION DES MATRICES POUR L'IA
 # ==========================================
