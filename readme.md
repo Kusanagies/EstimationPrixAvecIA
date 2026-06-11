@@ -81,6 +81,10 @@ https://www.data.gouv.fr/datasets/revenu-des-francais-a-la-commune //Attention d
 
 Nom dans la db : donnees-revenus-filosofi
 
+La première ligne avec une autre igne de donnée : # code_commune, nb_menages_fiscaux, median_revenu_disponible, indice_gini, pct_revenu_patrimoine, pct_minima_sociaux, pct_impots
+
+'02095', '2347', '16190', '0.255', '5', '8.3', '-10.4'
+
 
 
 Pour Paris : 
