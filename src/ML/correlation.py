@@ -1,5 +1,6 @@
 import time
 import sys
+import shap
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
@@ -8,6 +9,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
 import os
+import matplotlib.pyplot as plt 
 from pathlib import Path
 from dotenv import load_dotenv
 # ==========================================
@@ -353,6 +355,36 @@ mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
 
 r2_log = r2_score(y_test,predictions_log)
 r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
+
+# =============================
+# 7. Interpretation SHAP 
+# =============================
+print("\nCalcul des valeurs SHAP ...")
+
+# TreeExplainer est optimise pour les modeles d'arbre comme XGBoost
+explainer = shap.TreeExplainer(modele_xgb)
+shap_values = explainer.shap_values(X_test)
+
+# Quelles features comptent le plus en moyenne
+importance_shap = pd.Series(
+    np.abs(shap_values).mean(axis=0),
+    index=X_test.columns
+).sort_values(ascending=False)
+
+print("\n" + "=" * 50)
+print("Importance des features (SHAP)")
+print("="*50)
+for nom, val in importance_shap.head(15).items():
+    print(f"{nom.ljust(28)} : {val:.4f}")
+print("=" * 50)
+
+shap.summary_plot(shap_values,X_test,show=False,max_display=15)
+plt.title("Impact des variables sur le prix - {nom_zone}",fontsize=13)
+plt.tight_layout()
+plt.savefig(f"shape_summary_{nom_zone.replace(' ','_')}.png",dpi=150,bbox_inches='tight')
+print(f"Graphe SHAP enregistre : shap_summary_{nom_zone.replace(' ','_')}.png")
+
+
 
 # Affichage du rapport
 print("\n" + "="*50)
