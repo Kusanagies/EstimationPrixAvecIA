@@ -77,6 +77,12 @@ La première ligne avec une autre ligne de donnée : # id_monument, nom_commune,
 
 'PA00080241', 'Wy-dit-Joli-Village', 'site archéologique', '95690', 'Antiquité', NULL, '49.1030750412716', '1.83517099965768'
 
+https://www.data.gouv.fr/datasets/revenu-des-francais-a-la-commune //Attention données de 2021
+
+Nom dans la db : donnees-revenus-filosofi
+
+
+
 Pour Paris : 
 https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees //On n'utilise pas actuellement
 
