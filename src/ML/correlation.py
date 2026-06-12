@@ -106,7 +106,7 @@ print("Etape 1/6 : Extraction des donnees depuis SQL...")
 
 # 1. Immobilier (DVF) - Filtrage dynamique
 maisons = pd.read_sql(f"""
-    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, 
+    SELECT code_commune,id_parcelle, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, 
            surface_reelle_bati, type_local, nombre_pieces_principales, 
            surface_terrain,
            YEAR(date_mutation) AS annee_vente,
@@ -244,7 +244,7 @@ donnees_propres['log_surface'] = np.log(donnees_propres['surface_reelle_bati'])
 donnees_propres['surface_par_piece'] = donnees_propres['surface_reelle_bati'] / donnees_propres['nombre_pieces_principales']
 donnees_propres['a_terrain'] = (donnees_propres['surface_terrain']>0).astype(int)
 donnees_propres['log_terrain'] = np.log1p(donnees_propres['surface_terrain'])
-
+donnees_propres['code_section'] = donnees_propres['id_parcelle'].str[:10]
 # Pas besoin de la normalisation d'après claude pour le XGboost
 # Normalisation (Gestion des erreurs si variance = 0 dans une petite commune)
 """
@@ -329,9 +329,38 @@ X_test = X_test[features]
 X_train['prix_m2_voisins'] = voisins_train
 X_test['prix_m2_voisins'] = voisins_test
 
+
+# Médianes calculées uniquement sur le train
+idx_tr = X_train.index
+df_tr = donnees_propres.loc[idx_tr]
+
+med_section = df_tr.groupby('code_section')['prix_m2'].median()
+med_commune = df_tr.groupby('code_commune')['prix_m2'].median()
+med_globale = df_tr['prix_m2'].median()
+
+def prix_section(idx): 
+    sec = donnees_propres.loc[idx,'code_section']
+    com = donnees_propres.loc[idx,'code_commune']
+    if sec in med_section.index:
+        return med_section[sec]
+    elif com in med_commune.index:
+        return med_commune[com]
+    else :
+        return med_globale
+
+X_train['prix_m2_section'] = [prix_section(i) for i in X_train.index]
+X_test['prix_m2_section'] = [prix_section(i) for i in X_test.index]
+features = features + ['prix_m2_section']
+
+nb_ventes_section = df_tr.groupby('code_section').size()
+X_train['nb_ventes_section'] = [nb_ventes_section.get(donnees_propres.loc[i,'code_section'],0) for i in X_train.index]
+X_test['nb_ventes_section'] = [nb_ventes_section.get(donnees_propres.loc[i,'code_section'],0) for i in X_test.index]
+features = features + ['nb_ventes_section']
+
 features = list(dict.fromkeys(features))
 X_train = X_train[features]
 X_test = X_test[features]
+
 # ==========================================
 # 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
 # ==========================================
@@ -411,6 +440,7 @@ plt.legend()
 plt.tight_layout()
 plt.savefig(f"residu_{nom_zone.replace(' ','_')}.png",dpi = 150)
 plt.close()
+
 # Affichage du rapport
 print("\n" + "="*50)
 print(f"RAPPORT DE PERFORMANCE XGBOOST - {nom_zone.upper()}")
