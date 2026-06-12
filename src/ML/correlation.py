@@ -375,10 +375,15 @@ modele_xgb = xgb.XGBRegressor(
 )
 
 modele_xgb.fit(X_tr, y_tr, eval_set=[(X_val,y_val)], verbose = False)
+pred_val_log = modele_xgb.predict(X_val)
+residus_val = y_val.values - pred_val_log
+facteur_duan = np.mean(np.exp(residus_val))
+
+print(f"\nFacteur de correction de duan : {facteur_duan:.4f}")
 
 predictions_log = modele_xgb.predict(X_test)
 prix_reels_euros = np.exp(y_test)
-prix_predits_euros = np.exp(predictions_log)
+prix_predits_euros = np.exp(predictions_log) * facteur_duan
 
 mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
 
