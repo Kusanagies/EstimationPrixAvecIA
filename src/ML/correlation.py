@@ -296,7 +296,7 @@ test_mask = donnees_propres['annee_vente'] == annee_max
 
 if train_mask.sum() == 0 or test_mask.sum() == 0:
     print("  (une seule annee disponible -> repli sur split aleatoire)")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 else:
     X_train, y_train = X[train_mask], y[train_mask]
     X_test, y_test = X[test_mask], y[test_mask]
@@ -382,10 +382,35 @@ shap.summary_plot(shap_values,X_test,show=False,max_display=15)
 plt.title("Impact des variables sur le prix - {nom_zone}",fontsize=13)
 plt.tight_layout()
 plt.savefig(f"shape_summary_{nom_zone.replace(' ','_')}.png",dpi=150,bbox_inches='tight')
+plt.close()
 print(f"Graphe SHAP enregistre : shap_summary_{nom_zone.replace(' ','_')}.png")
 
+plt.figure(figsize=(8,8))
+plt.scatter(prix_reels_euros,prix_predits_euros,alpha=0.3, s=10)
+lims = [min(prix_reels_euros.min(),prix_predits_euros.min()),
+        max(prix_reels_euros.max(),prix_predits_euros.max())]
+plt.plot(lims,lims,'r--',linewidth=2,label='Prédiction parfaite')
+plt.xlabel("Prix réel (EUR/m²)")
+plt.ylabel("Prix prédit (EUR/m²)")
+plt.title(f"Prédictions vs réalité - {nom_zone}")
+plt.legend()
+plt.tight_layout()
+plt.savefig(f"pred_vs_reels_{nom_zone.replace(' ','_')}.png",dpi=150)
+plt.close()
 
-
+residus = prix_reels_euros.values - prix_predits_euros
+plt.figure(figsize=(9,5))
+plt.hist(residus,bins=50,edgecolor='black',alpha=0.7)
+plt.axvline(0,color='red',linestyle='--',label='Erreur nulle')
+plt.axvline(np.mean(residus),color='orange',linestyle='--',
+            label=f'Biais moyen : {np.mean(residus):.0f} EUR/m²' )
+plt.xlabel("Résidu (réel - prédit) en EUR/m²")
+plt.ylabel("Nombre de biens")
+plt.title(f"Distribution des erreurs - {nom_zone}")
+plt.legend()
+plt.tight_layout()
+plt.savefig(f"residu_{nom_zone.replace(' ','_')}.png",dpi = 150)
+plt.close()
 # Affichage du rapport
 print("\n" + "="*50)
 print(f"RAPPORT DE PERFORMANCE XGBOOST - {nom_zone.upper()}")
