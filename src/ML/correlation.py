@@ -12,6 +12,7 @@ import os
 import matplotlib.pyplot as plt 
 from pathlib import Path
 from dotenv import load_dotenv
+from pathlib import Path
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
@@ -97,6 +98,20 @@ else:
         nom_zone = f"Secteur {choix_local}"
 
 print(f"\nLancement de l'apprentissage pour : {nom_zone}")
+
+DOSSIER_OUT = RACINE_PROJET / "out"
+
+if departement == 'FRANCE' :
+    if choix_local == 'TOUS' :
+        dossier_graphes = DOSSIER_OUT / "FRANCE"
+    else : 
+        dossier_graphes = DOSSIER_OUT / choix_local[:2] / choix_local
+else :
+    if choix_local == 'TOUS':
+        dossier_graphes = DOSSIER_OUT / departement
+    else : 
+        dossier_graphes = DOSSIER_OUT / departement / choix_local
+
 print("-" * 50)
 temps_total_debut = time.time()
 # ==========================================
@@ -415,21 +430,26 @@ print("=" * 50)
 shap.summary_plot(shap_values,X_test,show=False,max_display=15)
 plt.title("Impact des variables sur le prix - {nom_zone}",fontsize=13)
 plt.tight_layout()
-plt.savefig(f"shape_summary_{nom_zone.replace(' ','_')}.png",dpi=150,bbox_inches='tight')
+plt.savefig(dossier_graphes / f"shape_summary_{nom_zone.replace(' ','_')}.png",dpi=150,bbox_inches='tight')
 plt.close()
-print(f"Graphe SHAP enregistre : shap_summary_{nom_zone.replace(' ','_')}.png")
+print(f"Graphe SHAP enregistre : shap_summary_{dossier_graphes}")
 
 plt.figure(figsize=(8,8))
 plt.scatter(prix_reels_euros,prix_predits_euros,alpha=0.3, s=10)
 lims = [min(prix_reels_euros.min(),prix_predits_euros.min()),
         max(prix_reels_euros.max(),prix_predits_euros.max())]
 plt.plot(lims,lims,'r--',linewidth=2,label='Prédiction parfaite')
+
+moyenne_predite = np.mean(prix_predits_euros)
+plt.axhline(moyenne_predite,color='blue',linestyle=':',linewidth=2,
+            label=f'Moyenne prédite : {moyenne_predite:.0f} EUR/m²')
+
 plt.xlabel("Prix réel (EUR/m²)")
 plt.ylabel("Prix prédit (EUR/m²)")
 plt.title(f"Prédictions vs réalité - {nom_zone}")
 plt.legend()
 plt.tight_layout()
-plt.savefig(f"pred_vs_reels_{nom_zone.replace(' ','_')}.png",dpi=150)
+plt.savefig(dossier_graphes / f"pred_vs_reels_{nom_zone.replace(' ','_')}.png",dpi=150)
 plt.close()
 
 residus = prix_reels_euros.values - prix_predits_euros
@@ -443,7 +463,7 @@ plt.ylabel("Nombre de biens")
 plt.title(f"Distribution des erreurs - {nom_zone}")
 plt.legend()
 plt.tight_layout()
-plt.savefig(f"residu_{nom_zone.replace(' ','_')}.png",dpi = 150)
+plt.savefig(dossier_graphes / f"residu_{nom_zone.replace(' ','_')}.png",dpi = 150)
 plt.close()
 
 # Affichage du rapport
