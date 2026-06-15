@@ -3,3 +3,4 @@ data/
 carte/
 .env
 out/
+modele_production/
