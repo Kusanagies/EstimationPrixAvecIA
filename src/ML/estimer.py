@@ -91,8 +91,36 @@ def geocoder(adresse,limite = 5,seuil_confiance=0.6):
     
     return {'status':'suggestions','suggestions':candidats}
 
+def recuperer_section(lat,lon):
+    """
+    Recuepre la parcelle cadastrale a partir de coordonnées via l'api carto IGN, et reconstruit
+    le code_section au format DVF (code commune + prefixe + section).
+    Renvoie None si introuvable
+    """
+    try : 
+        # Geom attend un point geoJSON {"type":"Point","coordinates":[lon,lat]}
+        geom = f'{{"type":"Point","coordinates":[{lon},{lat}]}}'
+        r = requests.get("https//apicarto.ign.fr/api/cadastre/parcelle",
+                         params={"geom":geom},timeout = 10)
+        data = r.json()
+    except Exception:
+        return None
 
+    feats = data.get('features',[])
+    if not feats : 
+        return None
+    props = feats[0]['properties']
 
+    code_com = props.get('code_dep','') + props.get('code_com','')
+    prefixe =props.get('com_abs','000')
+    section = props.get('section','')
+
+    if not code_com or not section : 
+        return None
+    
+    code_section = (code_com + prefixe + section)[:10]
+    return code_section
+    
 # ==========================================
 # DISTANCE A L'AMENITE LA PLUS PROCHE
 # ==========================================
@@ -132,10 +160,19 @@ def construire_features(lat, lon, code_insee, surface, est_maison,
 
     # prix_m2_section : on n'a pas la section de l'adresse, on retombe sur
     # la mediane communale (puis globale). C'est le repli prevu cote train.
-    prix_section = CTX['med_commune'].get(code_insee, CTX['med_globale'])
+    code_section = recuperer_section(lat,lon)
+    if code_section is not None and code_section in CTX['med_section']:
+        prix_section = CTX['med_section'][code_section]
+    elif code_insee in CTX['med_section']:
+        prix_section = CTX['med_commune'][code_insee]
+    else : 
+        prix_section = CTX['med_globale']
 
     # nb_ventes_section : approxime par les ventes de la commune (pas de section)
-    nb_ventes_sec = densite  # proxy raisonnable a l'echelle d'une adresse
+    if code_section is not None and code_section in CTX['nb_ventes_section']:
+        nb_ventes_sec = CTX['nb_ventes_section'][code_section]
+    else : 
+        nb_ventes_sec = densite  # proxy raisonnable a l'echelle d'une adresse
 
     # Volume etudiants de l'universite la plus proche
     if arbre_universites is not None:
