@@ -4,7 +4,7 @@ import shap
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold, cross_val_score
 from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
@@ -376,6 +376,24 @@ features = list(dict.fromkeys(features))
 X_train = X_train[features]
 X_test = X_test[features]
 
+kf = KFold(n_splits=5,shuffle=True,random_state=42)
+modele_cv = xgb.XGBRegressor(
+    n_estimators=500,learning_rate=0.05,max_depth=6,
+    subsample=0.8,colsample_bytree=0.8,
+    min_child_weight=3,reg_lambda=1.0,
+    random_state=42,n_jobs=-1
+)
+scores_r2 = cross_val_score(modele_cv,X_train,y_train,cv=kf,scoring='r2')
+scores_mae = cross_val_score(modele_cv,X_train,y_train,cv=kf,
+                            scoring='neg_mean_absolute_error')
+
+print("\n" + "=" * 50)
+print("VALIDATIOn CROISEE (5 plis) sur l'espace log")
+print("=" * 50)
+print(f"R2 par pli : {[f'{s:.2f}' for s in scores_r2]}")
+print(f"R2 moyen : {scores_r2.mean():.3f}(+/- {scores_r2.std():.3f})")
+print(f"MAE log moyen : {-scores_mae.mean():.3f} (+/- {scores_mae.std():.3f})")
+print("=" * 50)
 # ==========================================
 # 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
 # ==========================================
@@ -401,6 +419,17 @@ prix_reels_euros = np.exp(y_test)
 prix_predits_euros = np.exp(predictions_log) * facteur_duan
 
 mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
+
+mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros)/prix_reels_euros)) * 100
+
+erreur_mediane = np.median(np.abs(prix_reels_euros - prix_predits_euros))
+
+rmse = np.sqrt(np.mean((prix_reels_euros.values - prix_predits_euros)**2))
+
+erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros)/prix_reels_euros
+pct_10 = np.mean(erreur_rel <= 0.10)*100
+pct_20 = np.mean(erreur_rel <= 0.20)*100
+
 
 r2_log = r2_score(y_test,predictions_log)
 r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
@@ -476,5 +505,11 @@ print("-" * 50)
 print(f"R2 (espace log)                    : {r2_log * 100:.2f} %")
 print(f"R2 (euros / m2)                    : {r2_euros * 100:.2f} %")
 print(f"Erreur absolue moyenne (MAE)             : {mae:.2f} EUR / m2")
+print(f"*******************************************************")
+print(f"MAPE (erreur moyenne %)     : {mape:.1f}%")
+print(f"Erreur médiane              : {erreur_mediane:.0f} EUR/m²")
+print(f"RMSE                        : {rmse:.0f} EUR/m²")
+print(f"Prédictions à plus ou moins 10 % du réel : {pct_10:.1f} %")
+print(f"Prédiction à plus ou moins 20 % du réel  : {pct_20:.1f} %")
 print("="*50)
 print(f"Temps de traitement global : {time.time() - temps_total_debut:.2f} secondes.\n")
