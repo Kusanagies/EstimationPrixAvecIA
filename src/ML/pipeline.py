@@ -4,7 +4,7 @@ import shap
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_validate, KFold
 from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
@@ -248,8 +248,8 @@ for col in colonnes_chauffage:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
-plancher = donnees['prix_m2'].quantiles(0.01)
-plafond = donnees['prix_m2'].quantiles(0.99)
+plancher = donnees['prix_m2'].quantile(0.01)
+plafond = donnees['prix_m2'].quantile(0.99)
 # Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
     (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
@@ -367,6 +367,26 @@ X_test = X_test[features]
 # 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
 # ==========================================
 print("Etape 6/6 : Entrainement de l'algorithme XGBoost...")
+
+kf = KFold(n_splits=5,shuffle=True,random_state=42)
+modele_cv = xgb.XGBRegressor(
+    n_estimators=500,learning_rate=0.05,max_depth=6,
+    subsample=0.8,colsample_bytree=0.8,
+    min_child_weight=3, reg_lambda=1.0,
+    random_state=42,n_jobs=-1
+)
+
+cv = cross_validate(modele_cv,X_train,y_train,cv=kf,
+                    scoring='r2',return_train_score=True)
+
+print("\n" + "=" * 50)
+print("VALIDATION CROISEE (5 plis)")
+print("=" * 50)
+print(f"R2 train moyen      : {cv['train_score'].mean():.3f}")
+print(f"R2 validation moyen : {cv['test_score'].mean():.3f}")
+print(f"Ecart train-valid   : {(cv['train_score'].mean() - cv['test_score'].mean()):.3f}")
+print(f"Stabilite (ecart-type valid)    : {cv['test_score'].std():.3f}")
+print("=" * 50)
 
 X_tr, X_val, y_tr,y_val = train_test_split(X_train,y_train, test_size=0.3,random_state = 42)
 modele_xgb = xgb.XGBRegressor(
