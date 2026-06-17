@@ -29,7 +29,7 @@ moteur = create_engine("mysql+pymysql://root:1618@localhost:3306/EstimationIA")
 
 # 1. IMMOBILIER (DVF)
 maisons = pd.read_sql(f"""
-    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati, type_local
+    SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati, type_local, YEAR(date_mutation) AS annee_vente
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND LEFT(code_commune, 2) = '{departement}'
@@ -131,14 +131,19 @@ for col in colonnes_revenus:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
 # Filtrage des valeurs aberrantes (Fourchette adaptee a la majorite de la France)
+
+plancher = donnees['prix_m2'].quantile(0.01)
+plafond = donnees['prix_m2'].quantile(0.99)
+
 donnees_propres = donnees[
-    (donnees['prix_m2'] >= 500) & (donnees['prix_m2'] <= 15000) & 
+    (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
 ].copy()
 
 # Transformations
 donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
 donnees_propres['est_maison'] = (donnees_propres['type_local'] == 'Maison').astype(int)
+donnees_propres['est_appart'] = (donnees_propres['type_local'] == 'Appartement').astype(int)
 
 # Distances en Min-Max [0-1]
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
@@ -157,7 +162,7 @@ if colonnes_standard:
 # 5. MATRICE DE CORRELATION
 # ==========================================
 print("Etape 5/6 : Calcul de la matrice de correlation...")
-colonnes_finales = ['log_prix_m2', 'est_maison','prix_m2'] + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
+colonnes_finales = ['log_prix_m2', 'est_maison','prix_m2','est_appart','annee_vente'] + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
 
 # Filtrage pour ne garder que les colonnes qui existent et qui ne sont pas constantes
 colonnes_valides = [col for col in colonnes_finales if col in donnees_propres.columns and donnees_propres[col].nunique() > 1]
@@ -209,3 +214,7 @@ plt.xticks(rotation=45, ha='right', fontsize=10)
 plt.yticks(fontsize=10)
 plt.tight_layout()
 plt.show()
+
+evolution = donnees_propres.groupby('annee_vente')['prix_m2'].median()
+print("\nPrix médian au m² par annee :")
+print(evolution)
