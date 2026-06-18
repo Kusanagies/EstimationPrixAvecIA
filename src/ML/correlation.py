@@ -363,6 +363,13 @@ features = list(dict.fromkeys(features))
 X_train = X_train[features]
 X_test = X_test[features]
 
+
+# ==========================================
+# 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
+# ==========================================
+print("Etape 6/6 : Entrainement de l'algorithme XGBoost...")
+
+
 kf = KFold(n_splits=5,shuffle=True,random_state=42)
 modele_cv = xgb.XGBRegressor(
     n_estimators=500,learning_rate=0.05,max_depth=6,
@@ -381,10 +388,6 @@ print(f"R2 par pli : {[f'{s:.2f}' for s in scores_r2]}")
 print(f"R2 moyen : {scores_r2.mean():.3f}(+/- {scores_r2.std():.3f})")
 print(f"MAE log moyen : {-scores_mae.mean():.3f} (+/- {scores_mae.std():.3f})")
 print("=" * 50)
-# ==========================================
-# 6. ENTRAINEMENT ET EVALUATION DE XGBOOST
-# ==========================================
-print("Etape 6/6 : Entrainement de l'algorithme XGBoost...")
 
 X_tr, X_val, y_tr,y_val = train_test_split(X_train,y_train, test_size=0.3,random_state = 42)
 modele_xgb = xgb.XGBRegressor(
