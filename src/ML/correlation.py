@@ -214,9 +214,9 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
-plancher = donnees['prix_m2'].quantile(0.01)
-plafond = donnees['prix_m2'].quantile(0.99)
-
+plancher = max(donnees['prix_m2'].quantile(0.01),800)
+plafond = min(donnees['prix_m2'].quantile(0.99),15000)
+# Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
     (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
