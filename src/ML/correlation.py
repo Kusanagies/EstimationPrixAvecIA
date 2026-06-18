@@ -356,7 +356,29 @@ for type_bien, df_bien in datasets.items():
     plt.tight_layout()
     plt.savefig(dossier_graphes / f"shap_summary_{nom_fichier_base}_{type_bien}.png", dpi=150, bbox_inches='tight')
     plt.close()
+    # Dependence plots des variables les plus instructives
+    variables_a_tracer = ['prix_m2_section', 'surface_reelle_bati',
+                          'prix_m2_voisins', 'median_revenu_disponible']
+    # Le terrain n'a de sens que pour les maisons
+    if type_bien == 'maisons':
+        variables_a_tracer.append('surface_terrain')
 
+    for var in variables_a_tracer:
+        if var not in X_test.columns:
+            continue
+        # On saute les variables constantes (ex: terrain a 0 partout)
+        if X_test[var].nunique() <= 1:
+            continue
+        plt.figure()
+        shap.dependence_plot(var, shap_values, X_test,
+                             interaction_index=None, show=False)
+        plt.title(f"Effet de {var} - {nom_zone} ({type_bien})", fontsize=11)
+        plt.tight_layout()
+        plt.savefig(dossier_graphes / f"shap_dep_{var}_{nom_fichier_base}_{type_bien}.png",
+                    dpi=150, bbox_inches='tight')
+        plt.close()
+    print(f"Dependence plots enregistres pour {type_bien}")
+    
     plt.figure(figsize=(8,8))
     plt.scatter(prix_reels_euros, prix_predits_euros, alpha=0.3, s=10)
     lims = [min(prix_reels_euros.min(), prix_predits_euros.min()), max(prix_reels_euros.max(), prix_predits_euros.max())]
