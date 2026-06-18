@@ -247,9 +247,12 @@ for col in colonnes_chauffage:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
+plancher = donnees['prix_m2'].quantile(0.01)
+plafond = donnees['prix_m2'].quantile(0.99)
+
 # Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
-    (donnees['prix_m2'] >= 500) & (donnees['prix_m2'] <= 25000) & 
+    (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
 ].copy()
 
@@ -262,23 +265,7 @@ donnees_propres['log_terrain'] = np.log1p(donnees_propres['surface_terrain'])
 donnees_propres['code_section'] = donnees_propres['id_parcelle'].str[:10]
 # Pas besoin de la normalisation d'après claude pour le XGboost
 # Normalisation (Gestion des erreurs si variance = 0 dans une petite commune)
-"""
-colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-if colonnes_dist:
-    try:
-        donnees_propres[colonnes_dist] = MinMaxScaler().fit_transform(donnees_propres[colonnes_dist])
-    except ValueError:
-        pass
 
-colonnes_standard = ['surface_reelle_bati']
-if donnees_propres['volume_etudiants_proche'].nunique() > 1:
-    colonnes_standard.append('volume_etudiants_proche')
-
-try:
-    donnees_propres[colonnes_standard] = StandardScaler().fit_transform(donnees_propres[colonnes_standard])
-except ValueError:
-    pass
-"""
 
 colonnes_revenus = ['median_revenu_disponible','indice_gini','pct_minima_sociaux']
 for col in colonnes_revenus:

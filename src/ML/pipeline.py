@@ -1,6 +1,5 @@
 import time
 import sys
-import shap
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
@@ -9,7 +8,6 @@ from sklearn.metrics import mean_absolute_error, r2_score
 import xgboost as xgb
 from sqlalchemy import create_engine
 import os
-import matplotlib.pyplot as plt 
 from pathlib import Path
 from dotenv import load_dotenv
 from pathlib import Path
@@ -74,6 +72,18 @@ print("  - ... (et autres communes)")
 
 choix_local = input("\nSaisissez le code INSEE d'un secteur precis (ou tapez 'TOUS' pour le choix initial complet) : ").strip().upper()
 
+type_modele = input("\nType de bien a modeliser ('M' pour maisons et 'A' pour appartements, 'TOUS' pour les deux) :").strip().upper()
+
+if type_modele == 'M':
+    filtre_type = "type_local = 'Maison'"
+    suffixe_type = "maisons"
+elif type_modele == 'A':
+    filtre_type = "type_local = 'Appartement'"
+    suffixe_type = "appartements"
+else :
+    filtre_type = "type_local IN ('Maison','Appartement')"
+    suffixe_type= "tous"
+
 # Configuration des filtres SQL dynamiques globaux et locaux
 if departement == 'FRANCE':
     if choix_local == 'TOUS':
@@ -98,6 +108,7 @@ else:
         dep_infra = departement
         nom_zone = f"Secteur {choix_local}"
 
+nom_zone = f"{nom_zone} ({suffixe_type})"
 print(f"\nLancement de l'apprentissage pour : {nom_zone}")
 
 DOSSIER_OUT = RACINE_PROJET / "out"
@@ -133,9 +144,10 @@ maisons = pd.read_sql(f"""
       AND nombre_lots <= 1
       AND nombre_pieces_principales > 0
       AND {filtre_dvf}
-      AND type_local IN ('Maison', 'Appartement');
+      AND {filtre_type}
 """, con=moteur)
 
+maisons = maisons.drop_duplicates(subset=['id_parcelle','prix_m2','surface_reelle_bati'])
 if len(maisons) == 0:
     print(f"Erreur : Le code INSEE {choix_local} n'existe pas ou ne contient aucune donnee.")
     sys.exit()
@@ -248,8 +260,8 @@ for col in colonnes_chauffage:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
-plancher = donnees['prix_m2'].quantile(0.01)
-plafond = donnees['prix_m2'].quantile(0.99)
+plancher = max(donnees['prix_m2'].quantile(0.01),800)
+plafond = min(donnees['prix_m2'].quantile(0.99),15000)
 # Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
     (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
