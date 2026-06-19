@@ -317,7 +317,7 @@ for type_bien, df_bien in datasets.items():
     X_test = X_test[features_finales]
 
     modele_xgb = xgb.XGBRegressor(
-        n_estimators=3000, learning_rate=0.02, max_depth=6,
+        n_estimators=2000, learning_rate=0.05, max_depth=6,
         subsample=0.8, colsample_bytree=0.8,
         min_child_weight=3, reg_lambda=1.0,
         early_stopping_rounds=50, random_state=42, n_jobs=-1
@@ -326,7 +326,7 @@ for type_bien, df_bien in datasets.items():
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
     modele_xgb.fit(X_tr, y_tr, eval_set=[(X_tr,y_tr),(X_val, y_val)], verbose=False)
 
-    print(f"\nArbres construits jusqu'a : {modele_xgb.n_estimators}(plafond)")
+    print(f"\nArbres construits jusqu'a :{modele_xgb.n_estimators}(plafond)")
     print(f"Meilleur arbre (arret)      :{modele_xgb.best_iteration}")
     print(f"Arbres reellement utilisés  :{modele_xgb.best_iteration + 1}")
     
@@ -345,21 +345,6 @@ for type_bien, df_bien in datasets.items():
     r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
 
 
-    # Affichage de la courbe d'apprentissage
-    resultats_eval = modele_xgb.evals_result()
-
-    plt.figure(figsize=(10,6))
-    plt.plot(resultats_eval['validation_0']['rmse'],label='Entrainement',color='steelblue')
-    plt.plot(resultats_eval['validation_1']['rmse'],label='Validation',color='darkorange')
-    plt.axvline(modele_xgb.best_iteration,color='green',linestyle='--',
-                label=f'Arret optimal (arbre {modele_xgb.best_iteration})')
-    plt.xlabel("Nombre d'arbre")
-    plt.ylabel("RMSE (espace log)")
-    plt.title(f"Courbe d'apprentissage - {nom_zone}")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(dossier_graphes/f"courbe_apprentissage_{nom_zone.replace(' ','_')}.png")
-    plt.close()
     print(f"Courbe d'apprentisssage enregistree")
     print(f"Calcul des valeurs SHAP pour {type_bien}...")
     explainer = shap.TreeExplainer(modele_xgb)
@@ -380,6 +365,21 @@ for type_bien, df_bien in datasets.items():
     # Dependence plots des variables les plus instructives
     variables_a_tracer = ['prix_m2_section', 'surface_reelle_bati',
                           'prix_m2_voisins', 'median_revenu_disponible']
+    # Affichage de la courbe d'apprentissage
+    resultats_eval = modele_xgb.evals_result()
+
+    plt.figure(figsize=(10,6))
+    plt.plot(resultats_eval['validation_0']['rmse'],label='Entrainement',color='steelblue')
+    plt.plot(resultats_eval['validation_1']['rmse'],label='Validation',color='darkorange')
+    plt.axvline(modele_xgb.best_iteration,color='green',linestyle='--',
+                label=f'Arret optimal (arbre {modele_xgb.best_iteration})')
+    plt.xlabel("Nombre d'arbre")
+    plt.ylabel("RMSE (espace log)")
+    plt.title(f"Courbe d'apprentissage - {nom_zone}")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(dossier_graphes/f"courbe_apprentissage_{nom_fichier_base}_{type_bien}.png")
+    plt.close()
     # Le terrain n'a de sens que pour les maisons
     if type_bien == 'maisons':
         variables_a_tracer.append('surface_terrain')
