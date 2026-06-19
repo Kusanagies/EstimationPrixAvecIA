@@ -344,27 +344,32 @@ for type_bien, df_bien in datasets.items():
     erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros)/prix_reels_euros
     r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
 
+    # --- Courbe d'apprentissage en R2 ---
+    # XGBoost ne stocke que le RMSE ; on recalcule le R2 a chaque nombre d'arbres.
+    n_arbres = modele_xgb.best_iteration + 1
+    r2_train_courbe = []
+    r2_val_courbe = []
 
-    # Affichage de la courbe d'apprentissage
-    resultats_eval = modele_xgb.evals_result()
+    for i in range(1, n_arbres + 1):
+        pred_tr = modele_xgb.predict(X_tr, iteration_range=(0, i))
+        pred_va = modele_xgb.predict(X_val, iteration_range=(0, i))
+        r2_train_courbe.append(r2_score(y_tr, pred_tr))
+        r2_val_courbe.append(r2_score(y_val, pred_va))
 
-    plt.figure(figsize=(10,6))
-    plt.plot(resultats_eval['validation_0']['rmse'],label='Entrainement',color='steelblue')
-    plt.plot(resultats_eval['validation_1']['rmse'],label='Validation',color='darkorange')
-    plt.axvline(modele_xgb.best_iteration,color='green',linestyle='--',
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, n_arbres + 1), r2_train_courbe, label='Entraînement', color='steelblue')
+    plt.plot(range(1, n_arbres + 1), r2_val_courbe, label='Validation', color='darkorange')
+    plt.axvline(modele_xgb.best_iteration, color='green', linestyle='--',
                 label=f'Arret optimal (arbre {modele_xgb.best_iteration})')
-    plt.xlabel("Nombre d'arbre")
-    plt.ylabel("RMSE (espace log)")
-    plt.title(f"Courbe d'apprentissage - {nom_zone}")
+    plt.xlabel("Nombre d'arbres")
+    plt.ylabel("R2 (espace log)")
+    plt.title(f"Courbe d'apprentissage (R2) - {nom_zone} ({type_bien})")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(dossier_graphes/f"courbe_apprentissage_{nom_zone.replace(' ','_')}.png")
+    plt.savefig(dossier_graphes / f"courbe_apprentissage_{nom_zone.replace(' ', '_')}_{type_bien}.png", dpi=150)
     plt.close()
-    print(f"Courbe d'apprentisssage enregistree")
-    print(f"Calcul des valeurs SHAP pour {type_bien}...")
-    explainer = shap.TreeExplainer(modele_xgb)
-    shap_values = explainer.shap_values(X_test)
-
+    print("Courbe d'apprentissage (R2) enregistree")
+    
     importance_shap = pd.Series(np.abs(shap_values).mean(axis=0), index=X_test.columns).sort_values(ascending=False)
     print(f"\nTop 5 SHAP ({type_bien}) :")
     for nom, val in importance_shap.head(5).items():
