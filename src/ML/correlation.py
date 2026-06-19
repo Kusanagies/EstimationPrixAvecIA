@@ -369,7 +369,9 @@ for type_bien, df_bien in datasets.items():
     plt.savefig(dossier_graphes / f"courbe_apprentissage_{nom_zone.replace(' ', '_')}_{type_bien}.png", dpi=150)
     plt.close()
     print("Courbe d'apprentissage (R2) enregistree")
-    
+    print(f"Calcul des valeurs SHAP pour {type_bien}...")
+    explainer = shap.TreeExplainer(modele_xgb)
+    shap_values = explainer.shap_values(X_test)
     importance_shap = pd.Series(np.abs(shap_values).mean(axis=0), index=X_test.columns).sort_values(ascending=False)
     print(f"\nTop 5 SHAP ({type_bien}) :")
     for nom, val in importance_shap.head(5).items():
