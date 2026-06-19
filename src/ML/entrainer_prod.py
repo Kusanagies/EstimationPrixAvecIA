@@ -21,6 +21,7 @@ from sklearn.model_selection import train_test_split
 import xgboost as xgb
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
+import geopandas as gpd
 
 # ==========================================
 # 0. CONNEXION + CHOIX DE LA ZONE
@@ -30,6 +31,11 @@ print("-" * 50)
 
 RACINE_PROJET = Path(__file__).resolve().parents[2]
 load_dotenv(RACINE_PROJET / ".env")
+CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
+gdf_littoral = gpd.read_file(CHEMIN_GPKG)
+
+if gdf_littoral.crs is not None and gdf_littoral.crs.to_epsg() != 4326:
+    gdf_littoral = gdf_littoral.to_crs(epsg=4326)
 
 DOSSIER_MODELE = RACINE_PROJET / "modele_production"
 DOSSIER_MODELE.mkdir(exist_ok=True)
@@ -170,6 +176,24 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
+def extraire_points_contour(sous_gdf):
+    points = []
+    for geom in sous_gdf.geometry:
+        if geom.geom_type == 'MultiPolygon':
+            for poly in geom.geoms:
+                points.extend(list(poly.exterior.coords))
+        else:
+            points.extend(list(geom.exterior.coords))
+    if not points:
+        return pd.DataFrame(columns=['latitude', 'longitude'])
+    pts = np.array(points)
+    return pd.DataFrame(pts[:, [1, 0]], columns=['latitude', 'longitude'])
+
+classements = {'Mer': 'dist_mer_m', 'Lac': 'dist_lac_m', 'Estuaire': 'dist_estuaire_m'}
+for classement, nom_colonne in classements.items():
+    sous = gdf_littoral[gdf_littoral['CLASSEMENT'] == classement]
+    df_points = extraire_points_contour(sous)
+    calculer_distance_min(df_points, nom_colonne)
 # ==========================================
 # 4. NETTOYAGE + FEATURES
 # ==========================================
@@ -322,6 +346,9 @@ for type_bien, df_bien in datasets.items():
         'medianes_globales': {c: float(donnees[c].median()) for c in
                               colonnes_dpe + colonnes_chauffage + colonnes_revenus},
         'rayon_terre': RAYON_TERRE_METRES,
+        'points_mec':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Mer']),
+        'points_lac':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Lac']),
+        'points_estuaire':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Estuaire'])
     }
     
     with open(DOSSIER_MODELE / f"contexte_{type_bien}.pkl", "wb") as f:

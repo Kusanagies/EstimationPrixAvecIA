@@ -71,6 +71,9 @@ arbre_monuments = _arbre_ou_none(CTX_REF['monuments'])
 arbre_hopitaux = _arbre_ou_none(CTX_REF['hopitaux'])
 universites = CTX_REF['universites']
 arbre_universites = _arbre_ou_none(universites)
+arbre_mer =_arbre_ou_none(CTX_REF.get('points_mer'))
+arbre_lac =_arbre_ou_none(CTX_REF.get('points_lac'))
+arbre_estuaire = _arbre_ou_none(CTX_REF.get('points_estuaire'))
 
 print("Moteur d'estimation pret.")
 
@@ -234,6 +237,9 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
         'median_revenu_disponible': val_commune('median_revenu_disponible'),
         'indice_gini': val_commune('indice_gini'),
         'pct_minima_sociaux': val_commune('pct_minima_sociaux'),
+        'dist_mer_m':_distance_min(arbre_mer,point_rad),
+        'dist_lac_m':_distance_min(arbre_lac,point_rad),
+        'dist_estuaire_m':_distance_min(arbre_estuaire,point_rad),
     }
 
     manquantes = [f for f in FEATURES if f not in valeurs]
