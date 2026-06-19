@@ -7,11 +7,15 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sqlalchemy import create_engine
+import geopandas as gpd
 
 # ==========================================
 # 0. SAISIE UTILISATEUR
 # ==========================================
 departement = input("Veuillez saisir le numero du departement a analyser (ex: 34, 75, 13) : ").strip()
+
+CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
+gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
 if len(departement) < 2:
     print("Erreur : Le format du departement est invalide.")
@@ -83,6 +87,10 @@ print("Etape 2/6 : Fusion des donnees communales...")
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees,revenus, on='code_commune',how='left')
 
+donnees = donnees[
+    (donnees['latitude'].between(41,51)) &
+    (donnees['longitude'].between(-5,10))
+]
 # ==========================================
 # 3. CALCULS SPATIAUX (BallTree)
 # ==========================================
@@ -96,6 +104,8 @@ def calculer_distance_min(df_points, nom_colonne):
         arbre = BallTree(points_rad, metric='haversine')
         dist_rad, _ = arbre.query(maisons_rad, k=1)
         donnees[nom_colonne] = dist_rad.flatten() * RAYON_TERRE_METRES
+    else :
+        donnees[nom_colonne] = 999999
 
 calculer_distance_min(stations, 'dist_transport_m')
 calculer_distance_min(monuments, 'dist_monument_m')
@@ -107,6 +117,30 @@ if len(universites) > 0:
     dist_rad, idx_univ = arbre_univ.query(maisons_rad, k=1)
     donnees['dist_universite_m'] = dist_rad.flatten() * RAYON_TERRE_METRES
     donnees['volume_etudiants_proche'] = universites.iloc[idx_univ.flatten()]['nombre_etudiants'].values
+
+def extraire_points_contour(sous_gdf):
+    points = []
+    for geom in sous_gdf.geometry: 
+        if geom.geom_type == 'MultiPolygon':
+            for poly in geom.geoms:
+                points.extend(list(poly.exterior.coords))
+        else :
+            points.extend(list(geom.exterior.coords))
+    if not points:
+        return pd.DataFrame(columns=['latitude','longitude'])
+    pts = np.array(points)
+    return pd.DataFrame(pts[:,[1,0]],columns=['latitude','longitude'])
+
+classements = {'Mer':'dist_mer_m','Lac':'dist_lac_m','Estuaire':'dist_estuaire_m'}
+for classement, nom_colonne in classements.items():
+    sous = gdf_littoral[gdf_littoral['CLASSEMENT'] == classement]
+    df_points = extraire_points_contour(sous)
+    calculer_distance_min(df_points,nom_colonne)
+
+for col in ['dist_transport_m','dist_mer_m','dist_lac_m']:
+    print(f"{col} : min={donnees[col].min():.0f}m",
+          f"median={donnees[col].median():.0f}m,"
+          f"max={donnees[col].max():.0f}m")
 
 # ==========================================
 # 4. NETTOYAGE ET NORMALISATION
@@ -145,10 +179,9 @@ donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
 donnees_propres['est_maison'] = (donnees_propres['type_local'] == 'Maison').astype(int)
 donnees_propres['est_appart'] = (donnees_propres['type_local'] == 'Appartement').astype(int)
 
-# Distances en Min-Max [0-1]
+# Pour une matrice de correlation, ne pas normaliser les distances
+# on garde juste la liste des colonnes
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-if colonnes_dist:
-    donnees_propres[colonnes_dist] = MinMaxScaler().fit_transform(donnees_propres[colonnes_dist])
 
 # Variables quantitatives en Z-Score
 colonnes_standard = ['surface_reelle_bati']

@@ -12,12 +12,17 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pathlib import Path
 import pickle
+import geopandas as gpd 
+
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
 print("-" * 50)
 print("INITIALISATION DU MOTEUR D'ESTIMATION IMMOBILIERE")
 print("-" * 50)
+
+CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
+gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
 RACINE_PROJET = Path(__file__).resolve().parents[2]
 load_dotenv(RACINE_PROJET / ".env")
@@ -241,6 +246,24 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
+def extraire_points_contour(sous_gdf):
+    points = []
+    for geom in sous_gdf.geometry :
+        if geom.geom_type == 'MultiPolygon':
+            for poly in geom.geoms:
+                points.extend(list(geom.exterior.coords))
+        else :
+            points.extend(list(geom.exterior.coords))
+    if not points:
+        return pd.DataFrame(columns=['latitude','longitude'])
+    pts = np.array(points)
+    return pd.DataFrame(pts[:,[1,0]], columns=['latitude','longitude'])
+
+classements = {'Mer':'dist_mer_m','Lac':'dist_lac_m','Estuaire':'dist_estuaire_m'}
+for classement, nom_colonne in classements.items():
+    sous = gdf_littoral[gdf_littoral['CLASSEMENT'] == classement]
+    df_points = extraire_points_contour(sous)
+    calculer_distance_min(df_points,nom_colonne)
 
 # ==========================================
 # 4. NETTOYAGE ET FEATURE ENGINEERING
