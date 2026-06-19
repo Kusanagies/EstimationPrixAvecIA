@@ -307,7 +307,7 @@ for type_bien, df_bien in datasets.items():
     for nom, alpha in quantiles.items():
         m = xgb.XGBRegressor(
             objective='reg:quantileerror', quantile_alpha=alpha,
-            n_estimators=2000, learning_rate=0.02, max_depth=6,
+            n_estimators=2500, learning_rate=0.02, max_depth=6,
             subsample=0.8, colsample_bytree=0.8,
             min_child_weight=3, reg_lambda=1.0,
             early_stopping_rounds=50, random_state=42, n_jobs=-1

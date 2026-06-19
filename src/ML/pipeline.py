@@ -425,12 +425,11 @@ print("=" * 50)
 
 X_tr, X_val, y_tr,y_val = train_test_split(X_train,y_train, test_size=0.3,random_state = 42)
 modele_xgb = xgb.XGBRegressor(
-    n_estimators=2000, learning_rate=0.02, max_depth=6,
+    n_estimators=3000, learning_rate=0.02, max_depth=6,
     subsample=0.8, colsample_bytree=0.8,
     min_child_weight=3, reg_lambda=1.0,
     early_stopping_rounds=50, random_state=42,n_jobs=-1
 )
-
 modele_xgb.fit(X_tr, y_tr, eval_set=[(X_val,y_val)], verbose = False)
 pred_val_log = modele_xgb.predict(X_val)
 residus_val = y_val.values - pred_val_log
