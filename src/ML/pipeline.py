@@ -251,7 +251,7 @@ def extraire_points_contour(sous_gdf):
     for geom in sous_gdf.geometry :
         if geom.geom_type == 'MultiPolygon':
             for poly in geom.geoms:
-                points.extend(list(geom.exterior.coords))
+                points.extend(list(poly.exterior.coords))
         else :
             points.extend(list(geom.exterior.coords))
     if not points:
