@@ -345,7 +345,6 @@ for type_bien, df_bien in datasets.items():
     r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
 
 
-    print(f"Courbe d'apprentisssage enregistree")
     print(f"Calcul des valeurs SHAP pour {type_bien}...")
     explainer = shap.TreeExplainer(modele_xgb)
     shap_values = explainer.shap_values(X_test)
@@ -383,6 +382,8 @@ for type_bien, df_bien in datasets.items():
     # Le terrain n'a de sens que pour les maisons
     if type_bien == 'maisons':
         variables_a_tracer.append('surface_terrain')
+    
+    print(f"Courbe d'apprentisssage enregistree")
 
     for var in variables_a_tracer:
         if var not in X_test.columns:
