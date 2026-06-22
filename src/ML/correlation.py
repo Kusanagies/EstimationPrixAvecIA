@@ -316,26 +316,46 @@ for type_bien, df_bien in datasets.items():
     X_train = X_train[features_finales]
     X_test = X_test[features_finales]
 
-    modele_xgb = xgb.XGBRegressor(
-        n_estimators=2000, learning_rate=0.02, max_depth=6,
-        subsample=0.8, colsample_bytree=0.8,
-        min_child_weight=3, reg_lambda=1.0,
-        early_stopping_rounds=50, random_state=42, n_jobs=-1
-    )
-
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
-    modele_xgb.fit(X_tr, y_tr, eval_set=[(X_tr,y_tr),(X_val, y_val)], verbose=False)
 
+    quantiles = {'bas': 0.05, 'median': 0.50, 'haut': 0.95}
+    modeles_q = {}
+    for nom_q, alpha in quantiles.items():
+        m = xgb.XGBRegressor(
+            objective='reg:quantileerror', quantile_alpha=alpha,
+            n_estimators=2000, learning_rate=0.02, max_depth=6,
+            subsample=0.8, colsample_bytree=0.8,
+            min_child_weight=3, reg_lambda=1.0,
+            early_stopping_rounds=50, random_state=42, n_jobs=-1
+        )
+        m.fit(X_tr, y_tr, eval_set=[(X_tr, y_tr), (X_val, y_val)], verbose=False)
+        modeles_q[nom_q] = m
+
+    # On garde le modele median comme modele de reference (SHAP, courbe, etc.)
+    modele_xgb = modeles_q['median']
+
+    print(f"\nArbres (median) - arret : {modele_xgb.best_iteration}")
     print(f"\nArbres construits jusqu'a :{modele_xgb.n_estimators}(plafond)")
     print(f"Meilleur arbre (arret)      :{modele_xgb.best_iteration}")
     print(f"Arbres reellement utilisés  :{modele_xgb.best_iteration + 1}")
     
+    # Correction de Duan estimee sur le modele median
     pred_val_log = modele_xgb.predict(X_val)
     facteur_duan = np.mean(np.exp(y_val.values - pred_val_log))
 
-    predictions_log = modele_xgb.predict(X_test)
+    # Les trois predictions quantiles
+    pred_bas_log = modeles_q['bas'].predict(X_test)
+    pred_med_log = modeles_q['median'].predict(X_test)
+    pred_haut_log = modeles_q['haut'].predict(X_test)
+
     prix_reels_euros = np.exp(y_test)
-    prix_predits_euros = np.exp(predictions_log) * facteur_duan
+    prix_bas = np.exp(pred_bas_log) * facteur_duan
+    prix_predits_euros = np.exp(pred_med_log) * facteur_duan   # le median = prediction centrale
+    prix_haut = np.exp(pred_haut_log) * facteur_duan
+
+    # Garde-fou contre un eventuel croisement des quantiles
+    prix_bas = np.minimum(prix_bas, prix_haut)
+    prix_haut = np.maximum(prix_bas, prix_haut)
 
     mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
     mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros)/prix_reels_euros)) * 100
@@ -343,6 +363,11 @@ for type_bien, df_bien in datasets.items():
     rmse = np.sqrt(np.mean((prix_reels_euros.values - prix_predits_euros)**2))
     erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros)/prix_reels_euros
     r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
+
+    # Validation des intervalles de confiance
+    dans_intervalle = (prix_reels_euros.values >= prix_bas) & (prix_reels_euros.values <= prix_haut)
+    couverture = np.mean(dans_intervalle) * 100
+    largeur_moyenne = np.mean(prix_haut - prix_bas)
 
 
     print(f"Calcul des valeurs SHAP pour {type_bien}...")
@@ -427,6 +452,24 @@ for type_bien, df_bien in datasets.items():
     plt.savefig(dossier_graphes / f"residu_{nom_fichier_base}_{type_bien}.png", dpi=150)
     plt.close()
 
+    # Graphe des intervalles de confiance (echantillon trie)
+    ordre = np.argsort(prix_predits_euros)
+    ech = ordre[::max(1, len(ordre)//200)]  # ~200 biens pour la lisibilite
+
+    plt.figure(figsize=(11, 6))
+    x_axis = range(len(ech))
+    plt.fill_between(x_axis, prix_bas[ech], prix_haut[ech], alpha=0.3,
+                     color='steelblue', label='Intervalle 90%')
+    plt.plot(x_axis, prix_predits_euros[ech], color='navy', linewidth=1, label='Prediction (median)')
+    plt.scatter(x_axis, prix_reels_euros.values[ech], color='red', s=8, label='Prix reel')
+    plt.xlabel("Biens (tries par prix predit)")
+    plt.ylabel("Prix (EUR/m²)")
+    plt.title(f"Intervalles de confiance - {nom_zone} ({type_bien})")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(dossier_graphes / f"intervalles_{nom_fichier_base}_{type_bien}.png", dpi=150)
+    plt.close()
+
     print("\n" + "-"*50)
     print(f"RAPPORT XGBOOST - {type_bien.upper()}")
     print("-" * 50)
@@ -436,6 +479,8 @@ for type_bien, df_bien in datasets.items():
     print(f"MAPE            : {mape:.1f} %")
     print(f"Dans les +/- 10%: {np.mean(erreur_rel <= 0.10)*100:.1f} %")
     print(f"Dans les +/- 20%: {np.mean(erreur_rel <= 0.20)*100:.1f} %")
+    print(f"Couverture intervalle 90% : {couverture:.1f} %")
+    print(f"Largeur moyenne intervalle: {largeur_moyenne:.0f} EUR/m²")
 
 print("\n" + "="*50)
 print(f"Temps de traitement global : {time.time() - temps_total_debut:.2f} secondes.")
