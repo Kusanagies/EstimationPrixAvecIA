@@ -408,6 +408,7 @@ modele_cv = xgb.XGBRegressor(
     n_estimators=500,learning_rate=0.05,max_depth=6,
     subsample=0.8,colsample_bytree=0.8,
     min_child_weight=3, reg_lambda=1.0,
+    tree_method='hist', 
     random_state=42,n_jobs=-1
 )
 
@@ -428,6 +429,7 @@ modele_xgb = xgb.XGBRegressor(
     n_estimators=3000, learning_rate=0.02, max_depth=6,
     subsample=0.8, colsample_bytree=0.8,
     min_child_weight=3, reg_lambda=1.0,
+    tree_method='hist', # OPTIMISATION 3 : Accélération x10 de l'apprentissage final
     early_stopping_rounds=50, random_state=42,n_jobs=-1
 )
 modele_xgb.fit(X_tr, y_tr, eval_set=[(X_val,y_val)], verbose = False)
