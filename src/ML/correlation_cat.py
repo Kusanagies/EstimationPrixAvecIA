@@ -328,7 +328,8 @@ for type_bien, df_bien in datasets.items():
         random_seed=42,
         early_stopping_rounds=50,
         loss_function='RMSE',
-        verbose=False
+        custom_metric='R2',
+        verbose=False,
     )
 
     modele_cat.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
@@ -371,12 +372,15 @@ for type_bien, df_bien in datasets.items():
 
     # Courbe d'apprentissage (RMSE), via evals_result de CatBoost
     evals = modele_cat.get_evals_result()
-    courbe_val = evals['validation']['RMSE']
+    courbe_train = evals['learn']['R2']
+    courbe_val = evals['validation']['R2']
     plt.figure(figsize=(10, 6))
+    plt.plot(courbe_train,label='Entrainement',color='steelblue')
     plt.plot(courbe_val, label='Validation', color='darkorange')
+    
     plt.axvline(best_iter, color='green', linestyle='--', label=f'Arret optimal (arbre {best_iter})')
     plt.xlabel("Nombre d'arbres")
-    plt.ylabel("RMSE (espace log)")
+    plt.ylabel("R2 Espace / log")
     plt.title(f"Courbe d'apprentissage (CatBoost) - {nom_zone} ({type_bien})")
     plt.legend()
     plt.tight_layout()
