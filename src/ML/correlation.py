@@ -477,6 +477,8 @@ for type_bien, df_bien in datasets.items():
     print(f"R2 (euros / m2) : {r2_euros * 100:.2f} %")
     print(f"MAE             : {mae:.2f} EUR / m2")
     print(f"MAPE            : {mape:.1f} %")
+    print(f"Erreur mediane  : {erreur_mediane:.0f} EUR/m2")
+    print(f"RMSE            : {rmse:.0f} EUR/m2")
     print(f"Dans les +/- 10%: {np.mean(erreur_rel <= 0.10)*100:.1f} %")
     print(f"Dans les +/- 20%: {np.mean(erreur_rel <= 0.20)*100:.1f} %")
     print(f"Couverture intervalle 90% : {couverture:.1f} %")

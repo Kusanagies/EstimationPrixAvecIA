@@ -319,22 +319,22 @@ for type_bien, df_bien in datasets.items():
     # ==========================================
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
 
-    modele_cat = CatBoostRegressor(
-        iterations=4000,          # equivalent n_estimators
-        learning_rate=0.05,
-        depth=6,                  # equivalent max_depth
-        l2_leaf_reg=3.0,          # equivalent reg_lambda
-        subsample=0.8,
-        random_seed=42,
-        early_stopping_rounds=50,
-        loss_function='RMSE',
-        custom_metric='R2', 
-        verbose=False,
-    )
-
-    modele_cat.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
-
+    quantiles = {'bas':0.05,'median':0.50,'haut':0.95}
+    modeles_q = {}
+    for nom_q, alpha in quantiles.items():
+        m = CatBoostRegressor(
+            loss_function=f'Quantile:alpha={alpha}',
+            iterations = 4000, learning_rate=0.05,depth=6,
+            l2_leaf_reg=3.0,
+            random_seed=42,early_stopping_rounds=50,verbose=False,
+            custom_metric='R2',
+        )
+        m.fit(X_tr,y_tr,eval_set=(X_val,y_val),use_best_model=True)
+        modeles_q[nom_q] = m
+    
+    modele_cat = modeles_q['median']
     best_iter = modele_cat.get_best_iteration()
+
     print(f"\nArbres construits jusqu'a   : {modele_cat.get_param('iterations')} (plafond)")
     print(f"Meilleur arbre (arret)      : {best_iter}")
     print(f"Arbres reellement utilises  : {best_iter + 1}")
@@ -342,9 +342,19 @@ for type_bien, df_bien in datasets.items():
     pred_val_log = modele_cat.predict(X_val)
     facteur_duan = np.mean(np.exp(y_val.values - pred_val_log))
 
-    predictions_log = modele_cat.predict(X_test)
+    pred_bas_log = modeles_q['bas'].predict(X_test)
+    pred_med_log = modeles_q['median'].predict(X_test)
+    pred_haut_log = modeles_q['haut'].predict(X_test)
+
     prix_reels_euros = np.exp(y_test)
-    prix_predits_euros = np.exp(predictions_log) * facteur_duan
+    prix_bas = np.exp(pred_bas_log) * facteur_duan
+    prix_predits_euros = np.exp(pred_med_log) * facteur_duan
+    prix_haut = np.exp(pred_haut_log) * facteur_duan
+
+    prix_bas = np.minimum(prix_bas,prix_haut)
+    prix_haut = np.maximum(prix_bas,prix_haut)
+
+    predictions_log = modele_cat.predict(X_test)
 
     mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
     mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros) / prix_reels_euros)) * 100
@@ -352,6 +362,10 @@ for type_bien, df_bien in datasets.items():
     rmse = np.sqrt(np.mean((prix_reels_euros.values - prix_predits_euros) ** 2))
     erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros) / prix_reels_euros
     r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
+
+    dans_intervalle = (prix_reels_euros.values >= prix_bas) & (prix_reels_euros.values <= prix_haut)
+    couverture = np.mean(dans_intervalle) * 100
+    largeur_moyenne = np.mean(prix_haut - prix_bas)
 
     print(f"Calcul des valeurs SHAP pour {type_bien}...")
     explainer = shap.TreeExplainer(modele_cat)
@@ -372,15 +386,19 @@ for type_bien, df_bien in datasets.items():
 
     # Courbe d'apprentissage (RMSE), via evals_result de CatBoost
     evals = modele_cat.get_evals_result()
-    courbe_train = evals['learn']['R2']
-    courbe_val = evals['validation']['R2']
+
+    nom_metrique = list(evals['learn'].keys())[0]
+
+    courbe_train = evals['learn'][nom_metrique]
+    courbe_val = evals['validation'][nom_metrique]
+
     plt.figure(figsize=(10, 6))
     plt.plot(courbe_train,label='Entrainement',color='steelblue')
     plt.plot(courbe_val, label='Validation', color='darkorange')
     
     plt.axvline(best_iter, color='green', linestyle='--', label=f'Arret optimal (arbre {best_iter})')
     plt.xlabel("Nombre d'arbres")
-    plt.ylabel("R2 Espace / log")
+    plt.ylabel(f"Erreur quantile({nom_metrique})")
     plt.title(f"Courbe d'apprentissage (CatBoost) - {nom_zone} ({type_bien})")
     plt.legend()
     plt.tight_layout()
@@ -431,6 +449,23 @@ for type_bien, df_bien in datasets.items():
     plt.savefig(dossier_graphes / f"residu_CAT_{nom_fichier_base}_{type_bien}.png", dpi=150)
     plt.close()
 
+    ordre = np.argsort(prix_predits_euros)
+    ech = ordre[::max(1, len(ordre)//200)]  # ~200 biens pour la lisibilite
+
+    plt.figure(figsize=(11, 6))
+    x_axis = range(len(ech))
+    plt.fill_between(x_axis, prix_bas[ech], prix_haut[ech], alpha=0.3,
+                     color='steelblue', label='Intervalle 90%')
+    plt.plot(x_axis, prix_predits_euros[ech], color='navy', linewidth=1, label='Prediction (median)')
+    plt.scatter(x_axis, prix_reels_euros.values[ech], color='red', s=8, label='Prix reel')
+    plt.xlabel("Biens (tries par prix predit)")
+    plt.ylabel("Prix (EUR/m²)")
+    plt.title(f"Intervalles de confiance - {nom_zone} ({type_bien})")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(dossier_graphes / f"intervalles_{nom_fichier_base}_{type_bien}.png", dpi=150)
+    plt.close()
+
     print("\n" + "-" * 50)
     print(f"RAPPORT CATBOOST - {type_bien.upper()}")
     print("-" * 50)
@@ -442,6 +477,8 @@ for type_bien, df_bien in datasets.items():
     print(f"RMSE            : {rmse:.0f} EUR/m2")
     print(f"Dans les +/- 10%: {np.mean(erreur_rel <= 0.10) * 100:.1f} %")
     print(f"Dans les +/- 20%: {np.mean(erreur_rel <= 0.20) * 100:.1f} %")
+    print(f"Couverture intervalle 90% : {couverture:.1f} %")
+    print(f"Largeur moyenne intervalle : {largeur_moyenne:.0f} EUR/m2")
 
 print("\n" + "=" * 50)
 print(f"Temps de traitement global : {time.time() - temps_total_debut:.2f} secondes.")
