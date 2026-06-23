@@ -122,6 +122,7 @@ maisons = pd.read_sql(f"""
       AND nature_mutation = 'Vente' AND nombre_lots <= 1 AND nombre_pieces_principales > 0
       AND {filtre_dvf} AND type_local IN ('Maison', 'Appartement');
 """, con=moteur)
+maisons = maisons.drop_duplicates(subset=['id_parcelle','prix_m2','surface_reelle_bati'])
 
 if len(maisons) == 0:
     print(f"Erreur : Aucune donnee trouvée.")
