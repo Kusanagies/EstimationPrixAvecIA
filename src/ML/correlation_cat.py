@@ -328,7 +328,7 @@ for type_bien, df_bien in datasets.items():
         random_seed=42,
         early_stopping_rounds=50,
         loss_function='RMSE',
-        custom_metric='R2',
+        custom_metric='R2', 
         verbose=False,
     )
 

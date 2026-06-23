@@ -323,7 +323,7 @@ for type_bien, df_bien in datasets.items():
     for nom_q, alpha in quantiles.items():
         m = xgb.XGBRegressor(
             objective='reg:quantileerror', quantile_alpha=alpha,
-            n_estimators=2000, learning_rate=0.02, max_depth=6,
+            n_estimators=4000, learning_rate=0.05, max_depth=6,
             subsample=0.8, colsample_bytree=0.8,
             min_child_weight=3, reg_lambda=1.0,
             early_stopping_rounds=50, random_state=42, n_jobs=-1
@@ -393,8 +393,8 @@ for type_bien, df_bien in datasets.items():
     resultats_eval = modele_xgb.evals_result()
 
     plt.figure(figsize=(10,6))
-    plt.plot(resultats_eval['validation_0']['rmse'],label='Entrainement',color='steelblue')
-    plt.plot(resultats_eval['validation_1']['rmse'],label='Validation',color='darkorange')
+    plt.plot(resultats_eval['validation_0']['quantile'],label='Entrainement',color='steelblue')
+    plt.plot(resultats_eval['validation_1']['quantile'],label='Validation',color='darkorange')
     plt.axvline(modele_xgb.best_iteration,color='green',linestyle='--',
                 label=f'Arret optimal (arbre {modele_xgb.best_iteration})')
     plt.xlabel("Nombre d'arbre")
