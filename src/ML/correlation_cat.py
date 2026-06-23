@@ -326,8 +326,7 @@ for type_bien, df_bien in datasets.items():
             loss_function=f'Quantile:alpha={alpha}',
             iterations = 4000, learning_rate=0.05,depth=6,
             l2_leaf_reg=3.0,
-            random_seed=42,early_stopping_rounds=50,verbose=False,
-            custom_metric='R2',
+            random_seed=42,early_stopping_rounds=50,verbose=False
         )
         m.fit(X_tr,y_tr,eval_set=(X_val,y_val),use_best_model=True)
         modeles_q[nom_q] = m
@@ -463,7 +462,7 @@ for type_bien, df_bien in datasets.items():
     plt.title(f"Intervalles de confiance - {nom_zone} ({type_bien})")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(dossier_graphes / f"intervalles_{nom_fichier_base}_{type_bien}.png", dpi=150)
+    plt.savefig(dossier_graphes / f"intervalles_CAT_{nom_fichier_base}_{type_bien}.png", dpi=150)
     plt.close()
 
     print("\n" + "-" * 50)
