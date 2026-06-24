@@ -302,12 +302,12 @@ for type_bien, df_bien in datasets.items():
     
     if type_bien == 'appartements':
         print(f"\n=== DIAGNOSTIC APPARTEMENTS (correlation_cat) ===")
-        print(f"Nombre total apparts : {len(donnees_propres)}")
+        print(f"Nombre total apparts : {len(df_bien)}")
         print(f"Train = {len(X_train)} | Test : {len(X_test)}")
         print(f"Anne de test : {annee_max}")
-        print(f"Prix m2 - Median : {donnees_propres['prix_m2'].median():.0f}")
-        print(f"Annees train : {sorted(donnees_propres.loc[X_train.index, 'annee_vente'].unique())}")
-        print(f"Annee test : {sorted(donnees_propres.loc[X_test.index,'annee_vente'].unique())}")
+        print(f"Prix m2 - Median : {df_bien['prix_m2'].median():.0f}")
+        print(f"Annees train : {sorted(df_bien.loc[X_train.index, 'annee_vente'].unique())}")
+        print(f"Annee test : {sorted(df_bien.loc[X_test.index,'annee_vente'].unique())}")
     
 
     coords_train = np.deg2rad(df_bien.loc[X_train.index, ['latitude', 'longitude']])

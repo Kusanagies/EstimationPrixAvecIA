@@ -426,7 +426,7 @@ print("=" * 50)
 
 X_tr, X_val, y_tr,y_val = train_test_split(X_train,y_train, test_size=0.3,random_state = 42)
 modele_xgb = xgb.XGBRegressor(
-    n_estimators=3000, learning_rate=0.02, max_depth=6,
+    n_estimators=4000, learning_rate=0.05, max_depth=6,
     subsample=0.8, colsample_bytree=0.8,
     min_child_weight=3, reg_lambda=1.0,
     tree_method='hist', # OPTIMISATION 3 : Accélération x10 de l'apprentissage final
