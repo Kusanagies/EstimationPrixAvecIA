@@ -238,11 +238,7 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
-plancher = max(donnees['prix_m2'].quantile(0.01), 800)
-plafond = min(donnees['prix_m2'].quantile(0.99), 15000)
-
 donnees_propres = donnees[
-    (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) &
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
 ].copy()
 
@@ -279,6 +275,12 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
+    plancher = max(df_bien['prix_m2'].quantile(0.01),800)
+    plafond = min(df_bien['prix_m2'].quantile(0.99),15000) # On pourra modifié les prix plafond plus tard ou meme faire un "scanf"
+
+    df_bien = df_bien[
+        (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)
+    ].copy()
     print(f"\n{type_bien} : {len(df_bien)} biens apres filtrage")
     
     print("\n" + "=" * 50)

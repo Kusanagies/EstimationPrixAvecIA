@@ -217,7 +217,6 @@ donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
 # Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
-    (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
 ].copy()
 
@@ -258,7 +257,7 @@ for type_bien, df_bien in datasets.items():
     plancher = max(df_bien['prix_m2'].quantile(0.01),800)
     plafond = min(df_bien['prix_m2'].quantile(0.99),15000)
     df_bien = df_bien[
-        (df_bien['prix_m2'] >= plancher & (df_bien['prix_m2'] <= plafond))
+        (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)
     ].copy()
 
     print("\n" + "="*50)
