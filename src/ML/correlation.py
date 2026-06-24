@@ -352,23 +352,19 @@ for type_bien, df_bien in datasets.items():
     print(f"Meilleur arbre (arret)      :{modele_xgb.best_iteration}")
     print(f"Arbres reellement utilisés  :{modele_xgb.best_iteration + 1}")
     
-    # Correction de Duan estimee sur le modele median
-    pred_val_log = modele_xgb.predict(X_val)
-    facteur_duan = np.mean(np.exp(y_val.values - pred_val_log))
 
-    # Les trois predictions quantiles
+
     pred_bas_log = modeles_q['bas'].predict(X_test)
     pred_med_log = modeles_q['median'].predict(X_test)
-    pred_haut_log = modeles_q['haut'].predict(X_test)
+    pred_haut_log = modeles_q['median'].predict(X_test)
 
     prix_reels_euros = np.exp(y_test)
-    prix_bas = np.exp(pred_bas_log) * facteur_duan
-    prix_predits_euros = np.exp(pred_med_log) * facteur_duan   # le median = prediction centrale
-    prix_haut = np.exp(pred_haut_log) * facteur_duan
+    prix_bas = np.exp(pred_bas_log)
+    prix_predits_euros = np.exp(pred_med_log)
+    prix_haut = np.exp(pred_haut_log)
 
-    # Garde-fou contre un eventuel croisement des quantiles
-    prix_bas = np.minimum(prix_bas, prix_haut)
-    prix_haut = np.maximum(prix_bas, prix_haut)
+    prix_bas = np.minimum(prix_bas,prix_haut)
+    prix_haut = np.maximum(prix_bas,prix_haut)
 
     mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
     mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros)/prix_reels_euros)) * 100
