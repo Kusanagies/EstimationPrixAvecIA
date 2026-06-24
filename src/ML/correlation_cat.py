@@ -388,6 +388,11 @@ for type_bien, df_bien in datasets.items():
     prix_predits_euros = np.exp(pred_med_log)
     prix_haut = np.exp(pred_haut_log)
 
+    prix_reels_euros = np.exp(y_test)
+    prix_bas = np.exp(pred_bas_log)
+    prix_predits_euros = np.exp(pred_med_log)
+    prix_haut = np.exp(pred_haut_log)
+
     prix_bas = np.minimum(prix_bas,prix_haut)
     prix_haut = np.maximum(prix_bas,prix_haut)
 
