@@ -12,6 +12,7 @@ import os
 import matplotlib.pyplot as plt
 from pathlib import Path
 from dotenv import load_dotenv
+import geopandas as gpd
 
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
@@ -19,6 +20,9 @@ from dotenv import load_dotenv
 print("-" * 50)
 print("INITIALISATION DU MOTEUR D'ESTIMATION IMMOBILIERE (EVALUATION - CATBOOST)")
 print("-" * 50)
+
+CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
+gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
 RACINE_PROJET = Path(__file__).resolve().parents[2]
 load_dotenv(RACINE_PROJET / ".env")
@@ -200,6 +204,25 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
+def extraire_points_contour(sous_gdf):
+    points = []
+    for geom in sous_gdf.geometry :
+        if geom.geom_type == 'MultiPolygon':
+            for poly in geom.geoms:
+                points.extend(list(poly.exterior.coords))
+        else :
+            points.extend(list(geom.exterior.coords))
+    if not points:
+        return pd.DataFrame(columns=['latitude','longitude'])
+    pts = np.array(points)
+    return pd.DataFrame(pts[:,[1,0]], columns=['latitude','longitude'])
+
+classements = {'Mer':'dist_mer_m','Lac':'dist_lac_m','Estuaire':'dist_estuaire_m'}
+for classement, nom_colonne in classements.items():
+    sous = gdf_littoral[gdf_littoral['CLASSEMENT'] == classement]
+    df_points = extraire_points_contour(sous)
+    calculer_distance_min(df_points,nom_colonne)
+
 # ==========================================
 # 3. NETTOYAGE GLOBAL ET CORRECTION DVF
 # ==========================================
@@ -217,6 +240,7 @@ donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
 plancher = max(donnees['prix_m2'].quantile(0.01), 800)
 plafond = min(donnees['prix_m2'].quantile(0.99), 15000)
+
 donnees_propres = donnees[
     (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) &
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
@@ -255,6 +279,8 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
+    print(f"\n{type_bien} : {len(df_bien)} biens apres filtrage")
+    
     print("\n" + "=" * 50)
     print(f"ANALYSE DU FLUX : {type_bien.upper()} ({len(df_bien)} biens)")
     print("=" * 50)
@@ -316,7 +342,7 @@ for type_bien, df_bien in datasets.items():
     X_test = X_test[features_finales]
 
     # ==========================================
-    # MODELE CATBOOST (remplace XGBoost)
+    # MODELE CATBOOST
     # ==========================================
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
 
@@ -339,22 +365,19 @@ for type_bien, df_bien in datasets.items():
     print(f"Meilleur arbre (arret)      : {best_iter}")
     print(f"Arbres reellement utilises  : {best_iter + 1}")
 
-    pred_val_log = modele_cat.predict(X_val)
-    facteur_duan = np.mean(np.exp(y_val.values - pred_val_log))
-
     pred_bas_log = modeles_q['bas'].predict(X_test)
     pred_med_log = modeles_q['median'].predict(X_test)
     pred_haut_log = modeles_q['haut'].predict(X_test)
 
     prix_reels_euros = np.exp(y_test)
-    prix_bas = np.exp(pred_bas_log) * facteur_duan
-    prix_predits_euros = np.exp(pred_med_log) * facteur_duan
-    prix_haut = np.exp(pred_haut_log) * facteur_duan
+    
+    # SUPPRESSION DU FACTEUR DE DUAN (Inutile et faux pour des prédictions de médianes/quantiles)
+    prix_bas = np.exp(pred_bas_log)
+    prix_predits_euros = np.exp(pred_med_log)
+    prix_haut = np.exp(pred_haut_log)
 
     prix_bas = np.minimum(prix_bas,prix_haut)
     prix_haut = np.maximum(prix_bas,prix_haut)
-
-    predictions_log = modele_cat.predict(X_test)
 
     mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
     mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros) / prix_reels_euros)) * 100
@@ -384,7 +407,6 @@ for type_bien, df_bien in datasets.items():
     plt.savefig(dossier_graphes / f"shap_summary_CAT_{nom_fichier_base}_{type_bien}.png", dpi=150, bbox_inches='tight')
     plt.close()
 
-    # Courbe d'apprentissage (RMSE), via evals_result de CatBoost
     evals = modele_cat.get_evals_result()
 
     nom_metrique = list(evals['learn'].keys())[0]
@@ -450,7 +472,7 @@ for type_bien, df_bien in datasets.items():
     plt.close()
 
     ordre = np.argsort(prix_predits_euros)
-    ech = ordre[::max(1, len(ordre)//200)]  # ~200 biens pour la lisibilite
+    ech = ordre[::max(1, len(ordre)//200)]
 
     plt.figure(figsize=(11, 6))
     x_axis = range(len(ech))

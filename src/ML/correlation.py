@@ -122,7 +122,7 @@ maisons = pd.read_sql(f"""
       AND nature_mutation = 'Vente' AND nombre_lots <= 1 AND nombre_pieces_principales > 0
       AND {filtre_dvf} AND type_local IN ('Maison', 'Appartement');
 """, con=moteur)
-maisons = maisons.drop_duplicates(subset=['id_parcelle','prix_m2','surface_reelle_bati'])
+maisons = maisons.drop_duplicates(subset=['id_parcelle','prix_m2','surface_reelle_bati'])   
 
 if len(maisons) == 0:
     print(f"Erreur : Aucune donnee trouvée.")
@@ -215,8 +215,6 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
-plancher = max(donnees['prix_m2'].quantile(0.01),800)
-plafond = min(donnees['prix_m2'].quantile(0.99),15000)
 # Filtrage securise pour eviter les valeurs extremes
 donnees_propres = donnees[
     (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) & 
@@ -256,6 +254,12 @@ for type_bien, df_bien in datasets.items():
     if len(df_bien) < 50:
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
+    
+    plancher = max(df_bien['prix_m2'].quantile(0.01),800)
+    plafond = min(df_bien['prix_m2'].quantile(0.99),15000)
+    df_bien = df_bien[
+        (df_bien['prix_m2'] >= plancher & (df_bien['prix_m2'] <= plafond))
+    ].copy()
 
     print("\n" + "="*50)
     print(f"ANALYSE DU FLUX : {type_bien.upper()} ({len(df_bien)} biens)")
