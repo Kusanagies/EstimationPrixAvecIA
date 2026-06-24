@@ -278,7 +278,7 @@ for type_bien, df_bien in datasets.items():
         X_test, y_test = X[test_mask], y[test_mask]
     
     if type_bien == 'appartements':
-        print(f"\n=== DIAGNOSTIC APPARTEMENTS (correlation_cat) ===")
+        print(f"\n=== DIAGNOSTIC APPARTEMENTS (correlation_XGBoost) ===")
         print(f"Nombre total apparts : {len(df_bien)}")
         print(f"Train = {len(X_train)} | Test  : {len(X_test)}")
         print(f"Annee de test : {annee_max}")
