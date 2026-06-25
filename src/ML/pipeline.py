@@ -432,11 +432,11 @@ modeles_q = {}
 for nom_q,alpha in quantiles.items():
     m = xgb.XGBRegressor(
         objective='reg:quantileerror',quantile_alpha = alpha,
-        n_estimators = 4000, learning_rate=0.05, max_depth=6,
+        n_estimators = 4000, learning_rate=0.02, max_depth=6,
         subsample=0.8, colsample_bytree=0.8,
         min_child_weight=3,reg_lambda = 1.0,
         tree_method='hist',
-        early_stopping_rounds=50,random_state=42,n_jobs=-1
+        early_stopping_rounds=100,random_state=42,n_jobs=-1
     )
     m.fit(X_tr,y_tr,eval_set = [(X_val,y_val)], verbose=False)
     modeles_q[nom_q] = m
@@ -491,6 +491,7 @@ erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros)/prix_reels_eur
 pct_10 = np.mean(erreur_rel <= 0.10)*100
 pct_20 = np.mean(erreur_rel <= 0.20)*100
 
+print(f"Arbre d'arret median (pipeline) : {modele_xgb.best_iteration}")
 
 r2_log = r2_score(y_test,predictions_log)
 r2_euros = r2_score(prix_reels_euros, prix_predits_euros)

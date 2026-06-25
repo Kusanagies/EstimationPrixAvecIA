@@ -12,13 +12,16 @@ import os
 import matplotlib.pyplot as plt 
 from pathlib import Path
 from dotenv import load_dotenv
-
+import geopandas as gpd
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
 print("-" * 50)
 print("INITIALISATION DU MOTEUR D'ESTIMATION IMMOBILIERE (EVALUATION)")
 print("-" * 50)
+
+CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
+gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
 RACINE_PROJET = Path(__file__).resolve().parents[2]
 load_dotenv(RACINE_PROJET / ".env")
@@ -200,6 +203,25 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
+def extraire_points_contour(sous_gdf):
+    points = []
+    for geom in sous_gdf.geometry :
+        if geom.geom_type == 'MultiPolygon':
+            for poly in geom.geoms:
+                points.extend(list(poly.exterior.coords))
+        else :
+            points.extend(list(geom.exterior.coords))
+    if not points:
+        return pd.DataFrame(columns=['latitude','longitude'])
+    pts = np.array(points)
+    return pd.DataFrame(pts[:,[1,0]], columns=['latitude','longitude'])
+
+classements = {'Mer':'dist_mer_m','Lac':'dist_lac_m','Estuaire':'dist_estuaire_m'}
+for classement,nom_colonne in classements.items():
+    sous = gdf_littoral[gdf_littoral['CLASSEMENT']== classement]
+    df_points = extraire_points_contour(sous)
+    calculer_distance_min(df_points,nom_colonne)
+
 # ==========================================
 # 3. NETTOYAGE GLOBAL ET CORRECTION DVF
 # ==========================================
@@ -248,6 +270,8 @@ datasets = {
     'maisons': donnees_propres[donnees_propres['type_local'] == 'Maison'].copy(),
     'appartements': donnees_propres[donnees_propres['type_local'] == 'Appartement'].copy()
 }
+
+
 
 for type_bien, df_bien in datasets.items():
     if len(df_bien) < 50:
@@ -342,7 +366,7 @@ for type_bien, df_bien in datasets.items():
             tree_method = 'hist',
             early_stopping_rounds=50, random_state=42, n_jobs=-1
         )
-        m.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+        m.fit(X_tr, y_tr, eval_set=[(X_val, y_val),(X_tr,y_val)], verbose=False)
         modeles_q[nom_q] = m
 
     # On garde le modele median comme modele de reference (SHAP, courbe, etc.)
@@ -404,7 +428,7 @@ for type_bien, df_bien in datasets.items():
 
     plt.figure(figsize=(10,6))
     plt.plot(resultats_eval['validation_0']['quantile'],label='Entrainement',color='steelblue')
-    # plt.plot(resultats_eval['validation_1']['quantile'],label='Validation',color='darkorange')
+    plt.plot(resultats_eval['validation_1']['quantile'],label='Validation',color='darkorange')
     plt.axvline(modele_xgb.best_iteration,color='green',linestyle='--',
                 label=f'Arret optimal (arbre {modele_xgb.best_iteration})')
     plt.xlabel("Nombre d'arbre")
