@@ -301,15 +301,6 @@ for type_bien, df_bien in datasets.items():
         X_train, y_train = X[train_mask], y[train_mask]
         X_test, y_test = X[test_mask], y[test_mask]
     
-    if type_bien == 'appartements':
-        print(f"\n=== DIAGNOSTIC APPARTEMENTS (correlation_XGBoost) ===")
-        print(f"Nombre total apparts : {len(df_bien)}")
-        print(f"Train = {len(X_train)} | Test  : {len(X_test)}")
-        print(f"Annee de test : {annee_max}")
-        print(f"Prix m2 - median : {df_bien['prix_m2'].median():.0f}")
-        print(f"Annees train : {sorted(df_bien.loc[X_train.index, 'annee_vente'].unique())}")
-        print(f"Annees test : {sorted(df_bien.loc[X_test.index, 'annee_vente'].unique())}")
-
     coords_train = np.deg2rad(df_bien.loc[X_train.index, ['latitude', 'longitude']])
     prix_train = df_bien.loc[X_train.index, 'prix_m2'].values
     arbre_voisins = BallTree(coords_train, metric='haversine')
@@ -366,7 +357,7 @@ for type_bien, df_bien in datasets.items():
             tree_method = 'hist',
             early_stopping_rounds=50, random_state=42, n_jobs=-1
         )
-        m.fit(X_tr, y_tr, eval_set=[(X_val, y_val),(X_tr,y_val)], verbose=False)
+        m.fit(X_tr, y_tr, eval_set=[(X_val, y_val),(X_tr,y_tr)], verbose=False)
         modeles_q[nom_q] = m
 
     # On garde le modele median comme modele de reference (SHAP, courbe, etc.)
@@ -488,7 +479,7 @@ for type_bien, df_bien in datasets.items():
 
     # Graphe des intervalles de confiance (echantillon trie)
     ordre = np.argsort(prix_predits_euros)
-    ech = ordre[::max(1, len(ordre)//200)]  # ~200 biens pour la lisibilite
+    ech = ordre[::max(1, len(ordre)//300)]  # ~200 biens pour la lisibilite
 
     plt.figure(figsize=(11, 6))
     x_axis = range(len(ech))
