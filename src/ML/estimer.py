@@ -1,7 +1,7 @@
 """
-PHASE 3 - ESTIMATION D'UN BIEN A PARTIR DE SON ADRESSE
-=======================================================
-Charge les artefacts produits par entrainer_et_sauvegarder.py.
+PHASE 3 - ESTIMATION D'UN BIEN A PARTIR DE SON ADRESSE (CATBOOST)
+=================================================================
+Charge les artefacts produits par entrainer_prod_catboost.py.
 Gère dynamiquement les flux "maisons" et "appartements".
 
 Renvoie une estimation au m2 et totale, avec un intervalle de confiance a 90%
@@ -16,7 +16,7 @@ import requests
 import numpy as np
 import pandas as pd
 from sklearn.neighbors import BallTree
-import xgboost as xgb
+from catboost import CatBoostRegressor
 
 # ==========================================
 # CHARGEMENT DES ARTEFACTS (Une seule fois au demarrage)
@@ -26,15 +26,15 @@ DOSSIER_MODELE = RACINE_PROJET / "modele_production"
 
 print("Chargement des modeles en memoire...")
 
-# 1. Chargement des 6 modeles (3 pour maisons, 3 pour appartements)
+# 1. Chargement des 6 modeles CatBoost (3 maisons, 3 appartements)
 modeles = {'maisons': {}, 'appartements': {}}
 types_biens = ['maisons', 'appartements']
 
 for tb in types_biens:
     for nom in ['bas', 'median', 'haut']:
-        fichier_modele = DOSSIER_MODELE / f"modele_{tb}_{nom}.json"
+        fichier_modele = DOSSIER_MODELE / f"modele_{tb}_{nom}.cbm"
         if fichier_modele.exists():
-            m = xgb.XGBRegressor()
+            m = CatBoostRegressor()
             m.load_model(str(fichier_modele))
             modeles[tb][nom] = m
 
@@ -71,8 +71,8 @@ arbre_monuments = _arbre_ou_none(CTX_REF['monuments'])
 arbre_hopitaux = _arbre_ou_none(CTX_REF['hopitaux'])
 universites = CTX_REF['universites']
 arbre_universites = _arbre_ou_none(universites)
-arbre_mer =_arbre_ou_none(CTX_REF.get('points_mer'))
-arbre_lac =_arbre_ou_none(CTX_REF.get('points_lac'))
+arbre_mer = _arbre_ou_none(CTX_REF.get('points_mer'))
+arbre_lac = _arbre_ou_none(CTX_REF.get('points_lac'))
 arbre_estuaire = _arbre_ou_none(CTX_REF.get('points_estuaire'))
 
 print("Moteur d'estimation pret.")
@@ -89,11 +89,11 @@ def geocoder(adresse, limite=5, seuil_confiance=0.6):
         data = r.json()
     except Exception:
         return {'status': 'erreur', 'message': "Service de geocodage indisponible"}
-    
+
     feats = data.get('features', [])
-    if not feats: 
+    if not feats:
         return {'status': 'erreur', 'message': 'Aucune adresse trouvee'}
-    
+
     def extraire(feat):
         lon, lat = feat['geometry']['coordinates']
         p = feat['properties']
@@ -103,18 +103,18 @@ def geocoder(adresse, limite=5, seuil_confiance=0.6):
             'label': p.get('label', adresse),
             'score': p.get('score', 0)
         }
-        
+
     candidats = [extraire(f) for f in feats]
     meilleur = candidats[0]
 
     if meilleur['score'] >= seuil_confiance:
         return {'status': 'ok', 'resultat': meilleur}
-    
+
     return {'status': 'suggestions', 'suggestions': candidats}
 
 def recuperer_section(lat, lon):
     """Recupere la parcelle cadastrale a partir de coordonnees via l'API carto IGN."""
-    try: 
+    try:
         geom = f'{{"type":"Point","coordinates":[{lon},{lat}]}}'
         r = requests.get("https://apicarto.ign.fr/api/cadastre/parcelle",
                          params={"geom": geom}, timeout=10)
@@ -123,7 +123,7 @@ def recuperer_section(lat, lon):
         return None
 
     feats = data.get('features', [])
-    if not feats: 
+    if not feats:
         return None
     props = feats[0]['properties']
 
@@ -131,11 +131,11 @@ def recuperer_section(lat, lon):
     prefixe = props.get('com_abs', '000')
     section = props.get('section', '')
 
-    if not code_com or not section: 
+    if not code_com or not section:
         return None
-    
+
     return (code_com + prefixe + section)[:10]
-    
+
 # ==========================================
 # DISTANCE A L'AMENITE LA PLUS PROCHE
 # ==========================================
@@ -153,7 +153,7 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
                         nb_pieces, surface_terrain, annee, mois):
     """Reconstruit toutes les features d'un bien en ciblant le bon contexte."""
     point_rad = np.deg2rad([[lat, lon]])
-    
+
     # On charge le contexte specifique au type de bien
     CTX = contextes[type_bien]
     arbre_v = arbres_voisins[type_bien]
@@ -182,15 +182,15 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
     code_section = recuperer_section(lat, lon)
     if code_section is not None and code_section in CTX['med_section']:
         prix_section = CTX['med_section'][code_section]
-    elif code_insee in CTX['med_section']:
+    elif code_insee in CTX['med_commune']:
         prix_section = CTX['med_commune'][code_insee]
-    else: 
+    else:
         prix_section = CTX['med_globale']
 
     # nb_ventes_section
     if code_section is not None and code_section in CTX['nb_ventes_section']:
         nb_ventes_sec = CTX['nb_ventes_section'][code_section]
-    else: 
+    else:
         nb_ventes_sec = densite
 
     # Volume etudiants
@@ -237,14 +237,14 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
         'median_revenu_disponible': val_commune('median_revenu_disponible'),
         'indice_gini': val_commune('indice_gini'),
         'pct_minima_sociaux': val_commune('pct_minima_sociaux'),
-        'dist_mer_m':_distance_min(arbre_mer,point_rad),
-        'dist_lac_m':_distance_min(arbre_lac,point_rad),
-        'dist_estuaire_m':_distance_min(arbre_estuaire,point_rad),
+        'dist_mer_m': _distance_min(arbre_mer, point_rad),
+        'dist_lac_m': _distance_min(arbre_lac, point_rad),
+        'dist_estuaire_m': _distance_min(arbre_estuaire, point_rad),
     }
 
     manquantes = [f for f in FEATURES if f not in valeurs]
     if manquantes:
-        raise ValueError(f"Features manquantes pour le modele XGBoost : {manquantes}")
+        raise ValueError(f"Features manquantes pour le modele CatBoost : {manquantes}")
 
     return pd.DataFrame([[valeurs[f] for f in FEATURES]], columns=FEATURES)
 
@@ -254,17 +254,17 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
 # ==========================================
 def estimer(adresse, surface, type_bien, nb_pieces,
             surface_terrain=0, annee=2025, mois=6, geo_resolu=None):
-    
+
     if type_bien not in ['maisons', 'appartements']:
         return {'erreur': "Le type de bien doit etre 'maisons' ou 'appartements'."}
-        
+
     if type_bien not in modeles or 'median' not in modeles[type_bien]:
         return {'erreur': f"Le modele pour les {type_bien} n'est pas entraine."}
 
     # Resolution de l'adresse si non fournie
     if geo_resolu is None:
         geo = geocoder(adresse)
-        if geo['status'] == 'erreur': 
+        if geo['status'] == 'erreur':
             return {'erreur': geo['message']}
         if geo['status'] == 'suggestions':
             return {'suggestions': geo['suggestions']}
@@ -276,10 +276,13 @@ def estimer(adresse, surface, type_bien, nb_pieces,
         surface, type_bien, nb_pieces, surface_terrain, annee, mois
     )
 
-    # Prediction sur le bon jeu de modeles
+    # Prediction sur le bon jeu de modeles (pas de correction de Duan en quantile)
     m2_median = float(np.exp(modeles[type_bien]['median'].predict(X_bien)[0]))
     m2_bas = float(np.exp(modeles[type_bien]['bas'].predict(X_bien)[0]))
     m2_haut = float(np.exp(modeles[type_bien]['haut'].predict(X_bien)[0]))
+
+    # Garde-fou : on s'assure que bas <= median <= haut
+    m2_bas, m2_haut = min(m2_bas, m2_haut), max(m2_bas, m2_haut)
 
     return {
         'adresse': geo_resolu['label'],
@@ -298,20 +301,18 @@ if __name__ == "__main__":
     print("\n--- ESTIMATION D'UN BIEN ---")
     adresse = input("Adresse : ").strip()
     surface = float(input("Surface habitable (m2) : "))
-    
+
     choix_type = input("Type (maison/appartement) : ").strip().lower()
     type_bien = 'maisons' if choix_type.startswith('m') else 'appartements'
-    
+
     nb_pieces = int(input("Nombre de pieces : "))
-    
+
     terrain = input("Surface terrain (m2, 0 si aucun) : ").strip()
     surface_terrain = float(terrain) if terrain else 0
 
-    # Lancement de l'estimation
     res = estimer(adresse, surface, type_bien, nb_pieces, surface_terrain)
 
-    # Gestion des adresses incertaines
-    if 'suggestions' in res: 
+    if 'suggestions' in res:
         print("\nAdresse incertaine. Vouliez-vous dire :")
         for i, s in enumerate(res['suggestions'], 1):
             print(f" {i}. {s['label']} (confiance {s['score']:.0%})")
@@ -321,17 +322,15 @@ if __name__ == "__main__":
         if not choix.isdigit() or int(choix) == 0:
             print("Estimation annulee.")
             sys.exit()
-            
+
         idx = int(choix) - 1
         if idx < 0 or idx >= len(res['suggestions']):
             print("Choix invalide.")
             sys.exit()
-        
-        # On relance avec l'adresse forcee
+
         res = estimer(adresse, surface, type_bien, nb_pieces,
                       surface_terrain, geo_resolu=res['suggestions'][idx])
-        
-    # Affichage du resultat
+
     print("\n" + "=" * 50)
     if 'erreur' in res:
         print(f"ERREUR : {res['erreur']}")
