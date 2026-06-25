@@ -331,7 +331,7 @@ for type_bien, df_bien in datasets.items():
 
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
 
-    quantiles = {'bas': 0.05, 'median': 0.50, 'haut': 0.95}
+    quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
     modeles_q = {}
     for nom_q, alpha in quantiles.items():
         m = xgb.XGBRegressor(
@@ -339,9 +339,10 @@ for type_bien, df_bien in datasets.items():
             n_estimators=4000, learning_rate=0.05, max_depth=6,
             subsample=0.8, colsample_bytree=0.8,
             min_child_weight=3, reg_lambda=1.0,
+            tree_method = 'hist',
             early_stopping_rounds=50, random_state=42, n_jobs=-1
         )
-        m.fit(X_tr, y_tr, eval_set=[(X_tr, y_tr), (X_val, y_val)], verbose=False)
+        m.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
         modeles_q[nom_q] = m
 
     # On garde le modele median comme modele de reference (SHAP, courbe, etc.)
@@ -356,7 +357,7 @@ for type_bien, df_bien in datasets.items():
 
     pred_bas_log = modeles_q['bas'].predict(X_test)
     pred_med_log = modeles_q['median'].predict(X_test)
-    pred_haut_log = modeles_q['median'].predict(X_test)
+    pred_haut_log = modeles_q['haut'].predict(X_test)
 
     prix_reels_euros = np.exp(y_test)
     prix_bas = np.exp(pred_bas_log)
@@ -403,7 +404,7 @@ for type_bien, df_bien in datasets.items():
 
     plt.figure(figsize=(10,6))
     plt.plot(resultats_eval['validation_0']['quantile'],label='Entrainement',color='steelblue')
-    plt.plot(resultats_eval['validation_1']['quantile'],label='Validation',color='darkorange')
+    # plt.plot(resultats_eval['validation_1']['quantile'],label='Validation',color='darkorange')
     plt.axvline(modele_xgb.best_iteration,color='green',linestyle='--',
                 label=f'Arret optimal (arbre {modele_xgb.best_iteration})')
     plt.xlabel("Nombre d'arbre")
