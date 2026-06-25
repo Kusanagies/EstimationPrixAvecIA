@@ -357,7 +357,7 @@ for type_bien, df_bien in datasets.items():
             tree_method = 'hist',
             early_stopping_rounds=50, random_state=42, n_jobs=-1
         )
-        m.fit(X_tr, y_tr, eval_set=[(X_val, y_val),(X_tr,y_tr)], verbose=False)
+        m.fit(X_tr, y_tr, eval_set=[(X_tr,y_tr),(X_val, y_val)], verbose=False)
         modeles_q[nom_q] = m
 
     # On garde le modele median comme modele de reference (SHAP, courbe, etc.)
