@@ -31,7 +31,7 @@ import geopandas as gpd
 print("ENTRAINEMENT DU MODELE DE PRODUCTION - CATBOOST (MAISONS & APPARTEMENTS)")
 print("-" * 50)
 
-RACINE_PROJET = Path(__file__).resolve().parents[2]
+RACINE_PROJET = Path(__file__).resolve().parents[3]
 load_dotenv(RACINE_PROJET / ".env")
 CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
 gdf_littoral = gpd.read_file(CHEMIN_GPKG)
@@ -326,7 +326,7 @@ for type_bien, df_bien in datasets.items():
         )
         m.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
         modeles[nom] = m
-        print(f"     * Modele '{nom}' entraine ({m.get_best_iteration() + 1} arbres).")
+        print(f"     * Modele '{nom}' entraine ({m.get_best_iteration() + 1} arbre          s).")
 
     # 7. SAUVEGARDE DES ARTEFACTS SPECIFIQUES
     print("  -> Sauvegarde des artefacts...")

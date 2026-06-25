@@ -5,4 +5,4 @@ carte/
 out/
 modele_production/
 34/
-src/ML/catboost_info
+src/ML/CAT/catboost_info
