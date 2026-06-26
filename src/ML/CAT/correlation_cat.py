@@ -489,7 +489,7 @@ for type_bien, df_bien in datasets.items():
     plt.close()
 
     ordre = np.argsort(prix_predits_euros)
-    ech = ordre[::max(1, len(ordre)//200)]
+    ech = ordre[::max(1, len(ordre)//300)]
 
     plt.figure(figsize=(11, 6))
     x_axis = range(len(ech))
