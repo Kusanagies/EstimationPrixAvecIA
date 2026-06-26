@@ -326,7 +326,7 @@ for type_bien, df_bien in datasets.items():
         )
         m.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
         modeles[nom] = m
-        print(f"     * Modele '{nom}' entraine ({m.get_best_iteration() + 1} arbre          s).")
+        print(f"     * Modele '{nom}' entraine ({m.get_best_iteration() + 1} arbres).")
 
     # 7. SAUVEGARDE DES ARTEFACTS SPECIFIQUES
     print("  -> Sauvegarde des artefacts...")

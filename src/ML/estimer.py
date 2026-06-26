@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from sklearn.neighbors import BallTree
 import xgboost as xgb
+from catboost import CatBoostRegressor
 
 # ==========================================
 # CHARGEMENT DES ARTEFACTS (Une seule fois au demarrage)
@@ -24,17 +25,15 @@ import xgboost as xgb
 RACINE_PROJET = Path(__file__).resolve().parents[2]
 DOSSIER_MODELE = RACINE_PROJET / "modele_production"
 
-print("Chargement des modeles en memoire...")
-
 # 1. Chargement des 6 modeles (3 pour maisons, 3 pour appartements)
 modeles = {'maisons': {}, 'appartements': {}}
 types_biens = ['maisons', 'appartements']
 
 for tb in types_biens:
     for nom in ['bas', 'median', 'haut']:
-        fichier_modele = DOSSIER_MODELE / f"modele_{tb}_{nom}.json"
+        fichier_modele = DOSSIER_MODELE / f"modele_{tb}_{nom}.cbm" # Changer le .cbm en .json si on veut utiliser XGB
         if fichier_modele.exists():
-            m = xgb.XGBRegressor()
+            m = CatBoostRegressor() # Changer le CatBoostRegressor() par xgb.XGBRegressor() si on veut utiliser XGB
             m.load_model(str(fichier_modele))
             modeles[tb][nom] = m
 
@@ -260,7 +259,6 @@ def estimer(adresse, surface, type_bien, nb_pieces,
         
     if type_bien not in modeles or 'median' not in modeles[type_bien]:
         return {'erreur': f"Le modele pour les {type_bien} n'est pas entraine."}
-
     # Resolution de l'adresse si non fournie
     if geo_resolu is None:
         geo = geocoder(adresse)

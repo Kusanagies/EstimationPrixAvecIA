@@ -301,7 +301,7 @@ for type_bien, df_bien in datasets.items():
     print("  -> Entrainement des modèles quantiles...")
     X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    quantiles = {'bas': 0.05, 'median': 0.50, 'haut': 0.95}
+    quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
     modeles = {}
     
     for nom, alpha in quantiles.items():
