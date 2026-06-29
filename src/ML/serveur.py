@@ -45,12 +45,10 @@ class DemandeEstimation(BaseModel):
 class ReponseEstimation(BaseModel):
     adresse: str
     type_retenu: str
-    prix_m2_bas: int
-    prix_m2_milieu: int
-    prix_m2_haut: int
-    prix_total_bas: int
-    prix_total_milieu: int
-    prix_total_haut: int
+    prix_m2_estime:int
+    prix_m2_fourchette:tuple[int,int]
+    prix_total_estime:int
+    prix_total_fourchette:tuple[int,int]
 
 
 # ==========================================
