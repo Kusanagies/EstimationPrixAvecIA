@@ -6,3 +6,4 @@ out/
 modele_production/
 34/
 src/ML/CAT/catboost_info
+src/ML/__pycache__

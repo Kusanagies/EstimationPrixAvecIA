@@ -280,12 +280,12 @@ def estimer(adresse, surface, type_bien, nb_pieces,
     m2_haut = float(np.exp(modeles[type_bien]['haut'].predict(X_bien)[0]))
 
     return {
-        'adresse': geo_resolu['label'],
-        'type_retenu': type_bien,
-        'prix_m2_estime': round(m2_median),
-        'prix_m2_fourchette': (round(m2_bas), round(m2_haut)),
-        'prix_total_estime': round(m2_median * surface),
-        'prix_total_fourchette': (round(m2_bas * surface), round(m2_haut * surface)),
+        'adresse': str(geo_resolu['label']),
+        'type_retenu': str(type_bien),
+        'prix_m2_estime': int(round(m2_median)),
+        'prix_m2_fourchette': (int(round(m2_bas)), int(round(m2_haut))),
+        'prix_total_estime': int(round(m2_median * surface)),
+        'prix_total_fourchette': (int(round(m2_bas * surface)), int(round(m2_haut * surface))),
     }
 
 

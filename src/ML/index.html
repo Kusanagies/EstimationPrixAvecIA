@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Estimation immobiliere</title>
+</head>
+<body>
+
+  <h1>Estimation d'un bien</h1>
+
+  <p>
+    <label>Adresse :</label><br>
+    <input type="text" id="adresse" size="50" autocomplete="off"
+           oninput="chercherAdresses()">
+    <!-- La liste des suggestions s'affichera ici -->
+    <div id="suggestions"></div>
+    <!-- Stocke l'adresse choisie -->
+    <input type="hidden" id="adresse_choisie">
+  </p>
+
+  <p>
+    <label>Type de bien :</label><br>
+    <button type="button" id="btn_maison" onclick="choisirType('maisons')">Maison</button>
+    <button type="button" id="btn_appart" onclick="choisirType('appartements')">Appartement</button>
+    <span id="type_affiche"></span>
+    <input type="hidden" id="type_bien">
+  </p>
+
+  <p>
+    <label>Nombre de pieces :</label><br>
+    <input type="number" id="nb_pieces" min="1" step="1">
+  </p>
+
+  <p>
+    <label>Surface habitable (m2) :</label><br>
+    <input type="number" id="surface" min="9" step="1">
+  </p>
+
+  <p>
+    <label>Surface du terrain (m2, 0 si aucun) :</label><br>
+    <input type="number" id="surface_terrain" min="0" step="1" value="0">
+  </p>
+
+  <p>
+    <button type="button" onclick="lancerEstimation()">Estimer</button>
+  </p>
+
+  <hr>
+
+  <div id="resultat"></div>
+
+  <script>
+    // ============================================
+    // AUTO-COMPLETION DE L'ADRESSE (API BAN)
+    // ============================================
+    let timer = null;
+
+    function chercherAdresses() {
+      const champ = document.getElementById("adresse");
+      const texte = champ.value.trim();
+      const boite = document.getElementById("suggestions");
+
+      // On vide l'adresse validee des qu'on retape
+      document.getElementById("adresse_choisie").value = "";
+
+      if (texte.length < 4) {
+        boite.innerHTML = "";
+        return;
+      }
+
+      // On attend 300ms apres la derniere frappe pour ne pas spammer l'API
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        fetch("/api/adresses?q=" + encodeURIComponent(texte))
+          .then(r => r.json())
+          .then(data => {
+            boite.innerHTML = "";
+            data.suggestions.forEach(label => {
+              const div = document.createElement("div");
+              div.textContent = label;
+              div.style.cursor = "pointer";
+              div.onclick = () => {
+                champ.value = label;
+                document.getElementById("adresse_choisie").value = label;
+                boite.innerHTML = "";
+              };
+              boite.appendChild(div);
+            });
+          })
+          .catch(() => { boite.innerHTML = ""; });
+      }, 300);
+    }
+
+    // ============================================
+    // CHOIX DU TYPE DE BIEN (boutons)
+    // ============================================
+    function choisirType(type) {
+      document.getElementById("type_bien").value = type;
+      const libelle = (type === "maisons") ? "Maison" : "Appartement";
+      document.getElementById("type_affiche").textContent = "  -> " + libelle + " selectionne";
+    }
+
+    // ============================================
+    // LANCEMENT DE L'ESTIMATION
+    // ============================================
+    function lancerEstimation() {
+      const res = document.getElementById("resultat");
+
+      // On prend l'adresse validee si elle existe, sinon le texte tape
+      const adresse = document.getElementById("adresse_choisie").value
+                      || document.getElementById("adresse").value;
+      const type_bien = document.getElementById("type_bien").value;
+      const nb_pieces = document.getElementById("nb_pieces").value;
+      const surface = document.getElementById("surface").value;
+      const surface_terrain = document.getElementById("surface_terrain").value;
+
+      // Verifications simples
+      if (!adresse) { res.textContent = "Veuillez saisir une adresse."; return; }
+      if (!type_bien) { res.textContent = "Veuillez choisir un type de bien."; return; }
+      if (!nb_pieces) { res.textContent = "Veuillez saisir le nombre de pieces."; return; }
+      if (!surface) { res.textContent = "Veuillez saisir la surface habitable."; return; }
+
+      res.textContent = "Estimation en cours...";
+
+      fetch("/api/estimation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          adresse: adresse,
+          type_bien: type_bien,
+          nb_pieces: parseInt(nb_pieces),
+          surface: parseFloat(surface),
+          surface_terrain: parseFloat(surface_terrain)
+        })
+      })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          // FastAPI renvoie les erreurs sous "detail"
+          res.textContent = "Erreur : " + (data.detail || "requete invalide");
+          return;
+        }
+        // Affichage des trois prix
+        res.innerHTML =          "<h2>Resultat</h2>"
+                  + "<p>Bien : " + data.type_retenu + " - " + data.adresse + "</p>"
+                  + "<h3>Prix au m2</h3>"
+                  + "<p>Estime : " + data.prix_m2_estime + " EUR/m2<br>"
+                  + "Fourchette : " + data.prix_m2_fourchette[0] + " - " + data.prix_m2_fourchette[1] + " EUR/m2</p>"         
+                  + "<h3>Prix total</h3>"
+                  + "<p>Estime : " + data.prix_total_estime + " EUR<br>"          
+                  + "Fourchette : " + data.prix_total_fourchette[0] + " - " + data.prix_total_fourchette[1] + " EUR</p>";
+      })
+      .catch(() => { res.textContent = "Erreur de communication avec le serveur."; });
+    }
+  </script>
+
+</body>
+</html>
