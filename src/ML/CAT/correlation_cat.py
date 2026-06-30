@@ -14,6 +14,86 @@ from pathlib import Path
 from dotenv import load_dotenv
 import geopandas as gpd
 
+
+
+# Enlever si on veut reactiver Optuna 
+""" 
+import optuna
+
+def perte_pinball(y_vrai, y_pred, alpha=0.5):
+    """""" Perte pinball (quantile loss). Pour alpha=0.5, c'est l'erreur absolue / 2.""""""
+    erreur = y_vrai - y_pred
+    return np.mean(np.maximum(alpha * erreur, (alpha - 1) * erreur))
+
+
+def tuner_hyperparametres(X_train, y_train, n_essais=100):
+    # Lance l'optimisation Optuna sur le modele median CatBoost.
+    # Retourne le dictionnaire des meilleurs hyperparametres.
+    # Sous-split train / validation pour evaluer chaque essai
+    X_tr, X_val, y_tr, y_val = train_test_split(
+        X_train, y_train, test_size=0.2, random_state=42
+    )
+
+    def objectif(trial):
+        # Espace de recherche : les hyperparametres CatBoost a explorer
+        params = {
+            'loss_function': 'Quantile:alpha=0.5',
+            'iterations': 4000,             # plafond eleve, l'early stopping coupe
+            'random_seed': 42,
+            'verbose': False,
+            'early_stopping_rounds': 50,
+            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+            'depth': trial.suggest_int('depth', 4, 10),
+            'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0.5, 10.0, log=True),
+            'random_strength': trial.suggest_float('random_strength', 0.0, 2.0),
+            'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+            'border_count': trial.suggest_int('border_count', 32, 255),
+        }
+
+        modele = CatBoostRegressor(**params)
+        modele.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
+
+        # On evalue la perte pinball sur la validation (metrique adaptee au quantile)
+        pred_val = modele.predict(X_val)
+        return perte_pinball(y_val.values, pred_val, alpha=0.5)
+
+    # 'minimize' car on minimise la perte pinball
+    etude = optuna.create_study(direction='minimize')
+    etude.optimize(objectif, n_trials=n_essais, show_progress_bar=True)
+
+    print("\n" + "=" * 50)
+    print("MEILLEURS HYPERPARAMETRES TROUVES (CatBoost)")
+    print("=" * 50)
+    for nom, val in etude.best_params.items():
+        print(f"  {nom:22s} : {val}")
+    print(f"\nMeilleure perte pinball : {etude.best_value:.5f}")
+    print("=" * 50)
+
+    return etude.best_params
+
+
+# ==========================================
+# EXEMPLE D'UTILISATION
+# ==========================================
+# Dans ton pipeline, une fois X_train / y_train prets :
+#
+#   meilleurs = tuner_hyperparametres(X_train, y_train, n_essais=100)
+#
+# Puis tu entraines les 3 quantiles avec ces hyperparametres,
+# en changeant seulement alpha dans loss_function :
+#
+#   quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
+#   modeles_q = {}
+#   for nom_q, alpha in quantiles.items():
+#       m = CatBoostRegressor(
+#           loss_function=f'Quantile:alpha={alpha}',
+#           iterations=4000, random_seed=42, verbose=False,
+#           early_stopping_rounds=50,
+#           **meilleurs   # les hyperparametres tunes sur le median
+#       )
+#       m.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
+#       modeles_q[nom_q] = m
+"""
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
@@ -357,15 +437,16 @@ for type_bien, df_bien in datasets.items():
     # MODELE CATBOOST
     # ==========================================
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
-
+    """
+    meilleurs = tuner_hyperparametres(X_train,y_train,n_essais=100) #remettre si on veut utiliser Optuna pour donner les hyperparametres les plus optimisé
+    """
     quantiles = {'bas':0.05,'median':0.50,'haut':0.95}
     modeles_q = {}
     for nom_q, alpha in quantiles.items():
         m = CatBoostRegressor(
             loss_function=f'Quantile:alpha={alpha}',
-            iterations = 4000, learning_rate=0.05,depth=6,
-            l2_leaf_reg=3.0,
-            random_seed=42,early_stopping_rounds=50,verbose=False
+            iterations = 4000, learning_rate=0.04,depth=8
+            random_seed=42,early_stopping_rounds=50,verbose=False,
         )
         m.fit(X_tr,y_tr,eval_set=(X_val,y_val),use_best_model=True)
         modeles_q[nom_q] = m
