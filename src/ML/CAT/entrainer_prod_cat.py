@@ -65,7 +65,7 @@ if departement == 'FRANCE':
     dep_infra = "FRANCE"
     nom_zone = "France"
 else:
-    filtre_dvf = f"LEFT(code_commune, 2) = '{departement}'"
+    filtre_dvf = f"code_departement = '{departement}'"
     filtre_dpe = f"LEFT(code_insee_ban, 2) = '{departement}'"
     filtre_rev = f"LEFT(code_commune, 2) = '{departement}'"
     dep_infra = departement

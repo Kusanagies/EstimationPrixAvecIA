@@ -51,7 +51,7 @@ print(f"Recherche des secteurs disponibles pour : {departement}...")
 if departement == 'FRANCE':
     condition_dep = "1=1"
 else:
-    condition_dep = f"LEFT(code_commune, 2) = '{departement}'"
+    condition_dep = f"code_departement = '{departement}'"
 
 query_communes = f"""
     SELECT code_commune, MAX(nom_commune) as nom_commune, COUNT(*) as volume_ventes
