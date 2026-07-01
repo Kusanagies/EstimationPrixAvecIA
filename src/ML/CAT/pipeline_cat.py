@@ -24,7 +24,7 @@ print("-" * 50)
 CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
 gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
-RACINE_PROJET = Path(__file__).resolve().parents[2]
+RACINE_PROJET = Path(__file__).resolve().parents[3]
 load_dotenv(RACINE_PROJET / ".env")
 try:
     db_pass = os.environ["DB_PASS"]
