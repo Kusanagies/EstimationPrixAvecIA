@@ -89,7 +89,7 @@ maisons_apparts = pd.read_sql(f"""
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND nature_mutation = 'Vente'
-      AND nombre_lots <= 2
+      AND nombre_lots <= 3
       AND nombre_pieces_principales > 0
       AND {filtre_dvf}
       AND type_local IN ('Maison', 'Appartement');

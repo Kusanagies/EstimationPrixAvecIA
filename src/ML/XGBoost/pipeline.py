@@ -51,7 +51,7 @@ print(f"Recherche des secteurs disponibles pour : {departement}...")
 if departement == 'FRANCE':
     condition_dep = "1=1"
 else:
-    condition_dep = f"LEFT(code_commune, 2) = '{departement}'"
+    condition_dep = f"code_departement = '{departement}'"
 
 query_communes = f"""
     SELECT code_commune, MAX(nom_commune) as nom_commune, COUNT(*) as volume_ventes
@@ -103,7 +103,7 @@ if departement == 'FRANCE':
         nom_zone = f"Secteur {choix_local}"
 else:
     if choix_local == 'TOUS':
-        filtre_dvf = f"LEFT(code_commune, 2) = '{departement}'"
+        filtre_dvf = f"code_departement = '{departement}'"
         filtre_dpe = f"LEFT(code_insee_ban, 2) = '{departement}'"
         dep_infra = departement
         nom_zone = f"Departement {departement}"
@@ -146,7 +146,7 @@ maisons = pd.read_sql(f"""
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND nature_mutation = 'Vente'
-      AND nombre_lots <= 1
+      AND nombre_lots <= 3
       AND nombre_pieces_principales > 0
       AND {filtre_dvf}
       AND {filtre_type}

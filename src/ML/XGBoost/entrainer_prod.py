@@ -63,7 +63,7 @@ if departement == 'FRANCE':
     dep_infra = "FRANCE"
     nom_zone = "France"
 else:
-    filtre_dvf = f"LEFT(code_commune, 2) = '{departement}'"
+    filtre_dvf = f"code_departement = '{departement}'"
     filtre_dpe = f"LEFT(code_insee_ban, 2) = '{departement}'"
     filtre_rev = f"LEFT(code_commune, 2) = '{departement}'"
     dep_infra = departement
@@ -87,7 +87,7 @@ maisons_apparts = pd.read_sql(f"""
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND nature_mutation = 'Vente'
-      AND nombre_lots <= 1
+      AND nombre_lots <= 3
       AND nombre_pieces_principales > 0
       AND {filtre_dvf}
       AND type_local IN ('Maison', 'Appartement');
