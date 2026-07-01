@@ -4,6 +4,7 @@ carte/
 .env
 out/
 modele_production/
+modele_production_france/
 34/
 src/ML/CAT/catboost_info
 src/ML/__pycache__
