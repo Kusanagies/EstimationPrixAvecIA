@@ -59,6 +59,7 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `donnees_transport` | [Gares ferroviaires de tous types](https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non) | Distance à la gare | |
 | `infrastructures_hopitaux` | [Localisation des hôpitaux (OpenStreetMap)](https://www.data.gouv.fr/datasets/localisation-des-hopitaux-dans-openstreetmap) | Distance à l'hôpital | |
 | `monuments_historiques` | [Immeubles protégés au titre des monuments historiques](https://www.data.gouv.fr/datasets/immeubles-proteges-au-titre-des-monuments-historiques-2) | Distance au monument | |
+| `infrastructures_mairies` | [Annuaire de l'administration (service-public.gouv.fr)](https://www.data.gouv.fr/datasets/lannuaire-de-ladministration-base-de-donnees-locales) | Distance à la mairie (proxy centre-ville) | Filtré sur `type_service_local = mairie` ; ~35 000 communes |
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 
 ### Sources testées mais écartées
@@ -124,7 +125,7 @@ répond à un choix concret rencontré pendant le développement.
 
 ### Phase 2 — Nettoyage et filtrage des aberrations
 
-- Ne garder que les ventes **mono-lot** (`nombre_lots <= 1`) pour éviter les prix au m² faussés par des lots multiples.
+- Ne garder que les ventes **à un ou deux lots** (`nombre_lots <= 2`). Les ventes à 2 lots sont majoritairement un bien + sa dépendance directe (cave, parking) : les inclure récupère ~30 % de données supplémentaires sur les appartements et fait baisser le MAE de ~11 %, sans dégrader la couverture. Les lots plus nombreux (regroupements hétérogènes) restent exclus. *Décision testée et validée par la mesure sur le département 34.*
 - Limiter aux types `Maison` et `Appartement`.
 - Borner le prix au m² pour couper les artefacts de calcul (faux prix à ~24 000 €/m²).
 - Filtrer les aberrations de prix **par type de bien** : maisons et appartements
@@ -151,6 +152,9 @@ répond à un choix concret rencontré pendant le développement.
   calculées depuis le fichier littoral. En zone côtière, l'oubli de ces features
   fait chuter le R² des appartements de ~46 % à ~25 %. *Leçon : la qualité des
   features prime sur le réglage du modèle.*
+- **Distance à la mairie** (proxy de centralité / centre-ville), la mairie étant
+  quasi toujours au cœur historique de la commune. Extraite de l'annuaire de
+  l'administration.
 - Les voisinages sont calculés **entre biens du même type** (un appartement est
   comparé aux appartements voisins, pas aux maisons).
 - **Règle d'or** : toute feature dérivée des prix est calculée **sur le train uniquement**, pour éviter le *data leakage*.
