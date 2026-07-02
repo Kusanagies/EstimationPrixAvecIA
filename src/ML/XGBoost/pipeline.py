@@ -24,7 +24,7 @@ print("-" * 50)
 CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
 gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
-RACINE_PROJET = Path(__file__).resolve().parents[2]
+RACINE_PROJET = Path(__file__).resolve().parents[3]
 load_dotenv(RACINE_PROJET / ".env")
 try:
     db_pass = os.environ["DB_PASS"]
@@ -122,7 +122,7 @@ if departement == 'FRANCE' :
     if choix_local == 'TOUS' :
         dossier_graphes = DOSSIER_OUT / "FRANCE"
     else : 
-        dossier_graphes = DOSSIER_OUT / choix_local[:2] / choix_local
+        dossier_graphes = DOSSIER_OUT / choix_local[:3] / choix_local
 else :
     if choix_local == 'TOUS':
         dossier_graphes = DOSSIER_OUT / departement
