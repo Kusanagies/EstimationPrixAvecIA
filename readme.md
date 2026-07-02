@@ -59,7 +59,6 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `donnees_transport` | [Gares ferroviaires de tous types](https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non) | Distance à la gare | |
 | `infrastructures_hopitaux` | [Localisation des hôpitaux (OpenStreetMap)](https://www.data.gouv.fr/datasets/localisation-des-hopitaux-dans-openstreetmap) | Distance à l'hôpital | |
 | `monuments_historiques` | [Immeubles protégés au titre des monuments historiques](https://www.data.gouv.fr/datasets/immeubles-proteges-au-titre-des-monuments-historiques-2) | Distance au monument | |
-| `infrastructures_mairies` | [Annuaire de l'administration (service-public.gouv.fr)](https://www.data.gouv.fr/datasets/lannuaire-de-ladministration-base-de-donnees-locales) | Distance à la mairie (proxy centre-ville) | Filtré sur `type_service_local = mairie` ; ~35 000 communes |
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 
 ### Sources testées mais écartées

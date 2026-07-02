@@ -72,6 +72,9 @@ hopitaux = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_hopitau
 # 6. UNIVERSITES
 universites = pd.read_sql(f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
 
+# 6bis. MAIRIES (proxy centre-ville)
+mairies = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_mairies WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
+
 # 7. REVENUS INSEE (Filosofi) par commune
 revenus = pd.read_sql(f"""SELECT code_commune,median_revenu_disponible,indice_gini,pct_minima_sociaux 
                       FROM demographie_communes
@@ -110,6 +113,7 @@ def calculer_distance_min(df_points, nom_colonne):
 calculer_distance_min(stations, 'dist_transport_m')
 calculer_distance_min(monuments, 'dist_monument_m')
 calculer_distance_min(hopitaux, 'dist_hopital_m')
+calculer_distance_min(mairies, 'dist_mairie_m')
 
 if len(universites) > 0:
     univ_rad = np.deg2rad(universites[['latitude', 'longitude']])
