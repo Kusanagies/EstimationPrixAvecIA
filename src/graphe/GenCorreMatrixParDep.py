@@ -81,6 +81,23 @@ revenus = pd.read_sql(f"""SELECT code_commune,median_revenu_disponible,indice_gi
                       WHERE LEFT(code_commune,2) = '{departement}';
 """,con=moteur)
 
+# PÔLES URBAINS (aires d'attraction) — national, pour capter l'influence inter-départementale
+poles = pd.read_sql("""
+    SELECT aav_nom, AVG(latitude) AS latitude, AVG(longitude) AS longitude, COUNT(*) AS poids_aire
+    FROM referentiel_communes
+    WHERE aav_nom IS NOT NULL AND aav_nom != 'SO' AND latitude IS NOT NULL
+    GROUP BY aav_nom
+    HAVING poids_aire >= 10
+""", con=moteur)
+
+# Ajout manuel de pôles étrangers frontaliers (absents du référentiel FR)
+poles_etrangers = pd.DataFrame([
+    {'aav_nom': 'Genève',   'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 200},
+    {'aav_nom': 'Lausanne', 'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 80},
+])
+poles = pd.concat([poles, poles_etrangers], ignore_index=True)
+print(f"Nombre de poles urbains : {len(poles)}")
+
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']: revenus[col] = pd.to_numeric(revenus[col],errors='coerce')
 
 # ==========================================
@@ -146,6 +163,22 @@ for col in ['dist_transport_m','dist_mer_m','dist_lac_m']:
           f"median={donnees[col].median():.0f}m,"
           f"max={donnees[col].max():.0f}m")
 
+# POTENTIEL URBAIN : somme pondérée de l'influence des pôles (gravité)
+poles_rad = np.deg2rad(poles[['latitude', 'longitude']].values)
+poids_poles = poles['poids_aire'].values.astype(float)
+d0 = 5000  # lissage 5 km (évite l'explosion quand le bien est dans le pôle)
+
+arbre_poles = BallTree(poles_rad, metric='haversine')
+k_poles = min(20, len(poles))  # les 20 pôles les plus proches suffisent
+dist_rad_p, idx_p = arbre_poles.query(maisons_rad, k=k_poles)
+dist_m_p = dist_rad_p * RAYON_TERRE_METRES
+poids_ordonnes = poids_poles[idx_p]
+donnees['potentiel_urbain'] = np.sum(poids_ordonnes / (dist_m_p + d0), axis=1)
+
+print(f"potentiel_urbain : min={donnees['potentiel_urbain'].min():.1f}",
+      f"median={donnees['potentiel_urbain'].median():.1f}",
+      f"max={donnees['potentiel_urbain'].max():.1f}")
+
 # ==========================================
 # 4. NETTOYAGE ET NORMALISATION
 # ==========================================
@@ -199,7 +232,7 @@ if colonnes_standard:
 # 5. MATRICE DE CORRELATION
 # ==========================================
 print("Etape 5/6 : Calcul de la matrice de correlation...")
-colonnes_finales = ['log_prix_m2', 'est_maison','prix_m2','est_appart','annee_vente'] + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
+colonnes_finales = ['log_prix_m2', 'est_maison','prix_m2','est_appart','annee_vente','potentiel_urbain'] + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
 
 # Filtrage pour ne garder que les colonnes qui existent et qui ne sont pas constantes
 colonnes_valides = [col for col in colonnes_finales if col in donnees_propres.columns and donnees_propres[col].nunique() > 1]
