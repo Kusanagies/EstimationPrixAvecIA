@@ -343,15 +343,50 @@ coords_train = np.deg2rad(donnees_propres.loc[X_train.index,['latitude','longitu
 prix_train = donnees_propres.loc[X_train.index,'prix_m2'].values
 arbre_voisins = BallTree(coords_train,metric='haversine')
 
-# Train : on demande k=6 et on retire le 1er voisin (soi-meme)
-k_train = min(16,len(coords_train))
-_,idx_tr = arbre_voisins.query(coords_train,k=k_train)
-voisins_train = [np.median(prix_train[row[1:]]) if len(row) > 1 else prix_train[row[0]] for row in idx_tr]
+# --- prix_m2_voisins : pondéré par distance ET filtré par surface comparable ---
+# On récupère la surface des biens du train (alignée sur coords_train)
+surface_train = donnees_propres.loc[X_train.index, 'surface_reelle_bati'].values
 
-k_test = min(15,len(coords_train))
-coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude','longitude']])
-_,idx_te = arbre_voisins.query(coords_test,k=k_test)
-voisins_test = [np.median(prix_train[row]) for row in idx_te]
+def voisins_surface_ponderes(distances, indices, surface_bien, exclure_premier=False):
+    """
+    Parmi les voisins géographiques, ne garde que ceux de surface comparable
+   (±40 %), puis fait une moyenne pondérée par la distance.
+    Repli sur tous les voisins si aucun de surface comparable.
+    """
+    if exclure_premier:
+        distances = distances[1:]
+        indices = indices[1:]
+    if len(indices) == 0:
+        return np.nan
+    prix_v = prix_train[indices]
+    surf_v = surface_train[indices]
+    # Masque : voisins dont la surface est dans ±40 % de celle du bien
+    borne_bas, borne_haut = surface_bien * 0.6, surface_bien * 1.4
+    masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
+    if masque.sum() >= 3:   # assez de voisins comparables → on les utilise
+        d, p = distances[masque], prix_v[masque]
+    else:                    # repli : pas assez de comparables → tous les voisins
+        d, p = distances, prix_v
+    poids = 1.0 / (d + 1e-9)
+    return np.sum(poids * p) / np.sum(poids)
+# On cherche PLUS de voisins (40) car le filtre surface va en retirer
+k_train = min(41, len(coords_train))
+dist_tr, idx_tr = arbre_voisins.query(coords_train, k=k_train)
+surface_bien_train = X_train['surface_reelle_bati'].values
+
+voisins_train = [
+    voisins_surface_ponderes(dist_tr[i], idx_tr[i], surface_bien_train[i], exclure_premier=True)
+    for i in range(len(idx_tr))
+]
+
+k_test = min(40, len(coords_train))
+coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude', 'longitude']])
+dist_te, idx_te = arbre_voisins.query(coords_test, k=k_test)
+surface_bien_test = X_test['surface_reelle_bati'].values
+voisins_test = [
+    voisins_surface_ponderes(dist_te[i], idx_te[i], surface_bien_test[i], exclure_premier=False)
+    for i in range(len(idx_te))
+]
 
 rayon_rad = 1000 / RAYON_TERRE_METRES
 dens_train = arbre_voisins.query_radius(coords_train,r=rayon_rad,count_only=True)

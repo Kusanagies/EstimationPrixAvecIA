@@ -305,14 +305,33 @@ for type_bien, df_bien in datasets.items():
     prix_train = df_bien.loc[X_train.index, 'prix_m2'].values
     arbre_voisins = BallTree(coords_train, metric='haversine')
 
+    # --- prix_m2_voisins pondéré par la distance ---
+    # On récupère aussi les distances (dist) pour pondérer
     k_train = min(16, len(coords_train))
-    _, idx_tr = arbre_voisins.query(coords_train, k=k_train)
-    voisins_train = [np.median(prix_train[row[1:]]) if len(row) > 1 else prix_train[row[0]] for row in idx_tr]
+    dist_tr, idx_tr = arbre_voisins.query(coords_train, k=k_train)
+
+    def moyenne_ponderee(distances, prix):
+        # Poids = 1 / (distance + epsilon) : les voisins proches comptent plus
+        # epsilon évite la division par zéro pour un voisin à distance nulle
+        poids = 1.0 / (distances + 1e-9)
+        return np.sum(poids * prix) / np.sum(poids)
+
+    # Train : on exclut le 1er voisin (soi-même) via [1:]
+    voisins_train = [
+        moyenne_ponderee(dist_tr[i][1:], prix_train[idx_tr[i][1:]]) if k_train > 1
+        else prix_train[idx_tr[i][0]]
+        for i in range(len(idx_tr))
+    ]
 
     k_test = min(15, len(coords_train))
     coords_test = np.deg2rad(df_bien.loc[X_test.index, ['latitude', 'longitude']])
-    _, idx_te = arbre_voisins.query(coords_test, k=k_test)
-    voisins_test = [np.median(prix_train[row]) for row in idx_te]
+    dist_te, idx_te = arbre_voisins.query(coords_test, k=k_test)
+
+    # Test : pas d'exclusion (le bien test n'est pas dans le train)
+    voisins_test = [
+        moyenne_ponderee(dist_te[i], prix_train[idx_te[i]])
+        for i in range(len(idx_te))
+    ]
 
     rayon_rad = 1000 / RAYON_TERRE_METRES
     X_train['densite_ventes_1km'] = arbre_voisins.query_radius(coords_train, r=rayon_rad, count_only=True)
