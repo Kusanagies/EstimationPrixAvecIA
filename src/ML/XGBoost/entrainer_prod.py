@@ -266,12 +266,15 @@ for type_bien, df_bien in datasets.items():
     arbre_voisins = BallTree(coords_all, metric='haversine')
 
     k_voisins = min(16, len(coords_all))
-    _, idx_v = arbre_voisins.query(coords_all, k=k_voisins)
-    
-    # Prudence si k=1 (le bien est seul dans le secteur)
+    dist_v, idx_v = arbre_voisins.query(coords_all, k=k_voisins)
+
     if k_voisins > 1:
-        voisins_prix = prix_all[idx_v[:, 1:]]
-        X['prix_m2_voisins'] = np.median(voisins_prix, axis=1)
+        # Moyenne pondérée par la distance : les voisins proches comptent plus.
+        # On exclut le 1er voisin (le bien lui-même, distance ~0).
+        dist_voisins = dist_v[:, 1:]
+        prix_voisins = prix_all[idx_v[:, 1:]]
+        poids = 1.0 / (dist_voisins + 1e-9)
+        X['prix_m2_voisins'] = np.sum(poids * prix_voisins, axis=1) / np.sum(poids, axis=1)
     else:
         X['prix_m2_voisins'] = prix_all
 
