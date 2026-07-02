@@ -142,6 +142,19 @@ dpe = pd.read_sql(f"""
 
 stations = pd.read_sql("SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur)
 
+# Poles urbains (aires d'attraction) - national, pour le potentiel urbain
+poles = pd.read_sql("""
+    SELECT aav_nom, AVG(latitude) AS latitude, AVG(longitude) AS longitude, COUNT(*) AS poids_aire
+    FROM referentiel_communes
+    WHERE aav_nom IS NOT NULL AND aav_nom != 'SO' AND latitude IS NOT NULL
+    GROUP BY aav_nom HAVING poids_aire >= 10
+""", con=moteur)
+poles_etrangers = pd.DataFrame([
+    {'aav_nom': 'Genève', 'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 200},
+    {'aav_nom': 'Lausanne', 'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 80},
+])
+poles = pd.concat([poles, poles_etrangers], ignore_index=True)
+
 if dep_infra == 'FRANCE':
     query_monuments = "SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;"
     query_hopitaux = "SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;"
@@ -255,6 +268,15 @@ def traiter_type(filtre_type, suffixe_type):
         df_points = extraire_points_contour(sous)
         calculer_distance_min(df_points, nom_colonne)
 
+    # Potentiel urbain (gravite : influence ponderee des poles)
+    poles_rad = np.deg2rad(poles[['latitude', 'longitude']].values)
+    poids_poles = poles['poids_aire'].values.astype(float)
+    arbre_poles = BallTree(poles_rad, metric='haversine')
+    k_poles = min(20, len(poles))
+    dist_rad_p, idx_p = arbre_poles.query(maisons_rad, k=k_poles)
+    dist_m_p = dist_rad_p * RAYON_TERRE_METRES
+    donnees['potentiel_urbain'] = np.sum(poids_poles[idx_p] / (dist_m_p + 5000), axis=1)
+
     # --- Nettoyage et feature engineering ---
     colonnes_dpe = ['pct_dpe_A','pct_dpe_B','pct_dpe_C','pct_dpe_D','pct_dpe_E','pct_dpe_F','pct_dpe_G']
     for col in colonnes_dpe:
@@ -291,7 +313,7 @@ def traiter_type(filtre_type, suffixe_type):
     colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
     colonnes_standard = ['surface_reelle_bati','volume_etudiants_proche',
                          'log_surface','surface_par_piece',
-                         'surface_terrain','log_terrain',
+                         'surface_terrain','log_terrain','potentiel_urbain',
                          'median_revenu_disponible','indice_gini','pct_minima_sociaux']
 
     features = ['est_maison','latitude','longitude','nombre_pieces_principales','annee_vente','mois_vente','a_terrain'] \
@@ -311,26 +333,45 @@ def traiter_type(filtre_type, suffixe_type):
         X_train, y_train = X[train_mask], y[train_mask]
         X_test, y_test = X[test_mask], y[test_mask]
 
-    # --- prix_m2_voisins : pondere par distance (version A, validee) ---
+    # --- prix_m2_voisins : pondere par distance ET filtre par surface comparable (version B) ---
     coords_train = np.deg2rad(donnees_propres.loc[X_train.index, ['latitude','longitude']])
     prix_train = donnees_propres.loc[X_train.index, 'prix_m2'].values
+    surface_train = donnees_propres.loc[X_train.index, 'surface_reelle_bati'].values
     arbre_voisins = BallTree(coords_train, metric='haversine')
 
-    def moyenne_ponderee(distances, prix):
-        poids = 1.0 / (distances + 1e-9)
-        return np.sum(poids * prix) / np.sum(poids)
+    def voisins_surface_ponderes(distances, indices, surface_bien, exclure_premier=False):
+        if exclure_premier:
+            distances = distances[1:]
+            indices = indices[1:]
+        if len(indices) == 0:
+            return np.nan
+        prix_v = prix_train[indices]
+        surf_v = surface_train[indices]
+        borne_bas, borne_haut = surface_bien * 0.6, surface_bien * 1.4
+        masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
+        if masque.sum() >= 3:
+            d, p = distances[masque], prix_v[masque]
+        else:
+            d, p = distances, prix_v
+        poids = 1.0 / (d + 1e-9)
+        return np.sum(poids * p) / np.sum(poids)
 
-    k_train = min(16, len(coords_train))
+    k_train = min(41, len(coords_train))
     dist_tr, idx_tr = arbre_voisins.query(coords_train, k=k_train)
-    if k_train > 1:
-        voisins_train = [moyenne_ponderee(dist_tr[i][1:], prix_train[idx_tr[i][1:]]) for i in range(len(idx_tr))]
-    else:
-        voisins_train = [prix_train[idx_tr[i][0]] for i in range(len(idx_tr))]
+    surface_bien_train = X_train['surface_reelle_bati'].values
+    voisins_train = [
+        voisins_surface_ponderes(dist_tr[i], idx_tr[i], surface_bien_train[i], exclure_premier=True)
+        for i in range(len(idx_tr))
+    ]
 
-    k_test = min(15, len(coords_train))
+    k_test = min(40, len(coords_train))
     coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude','longitude']])
     dist_te, idx_te = arbre_voisins.query(coords_test, k=k_test)
-    voisins_test = [moyenne_ponderee(dist_te[i], prix_train[idx_te[i]]) for i in range(len(idx_te))]
+    surface_bien_test = X_test['surface_reelle_bati'].values
+    voisins_test = [
+        voisins_surface_ponderes(dist_te[i], idx_te[i], surface_bien_test[i], exclure_premier=False)
+        for i in range(len(idx_te))
+    ]
 
     rayon_rad = 1000 / RAYON_TERRE_METRES
     dens_train = arbre_voisins.query_radius(coords_train, r=rayon_rad, count_only=True)
