@@ -31,7 +31,7 @@ import geopandas as gpd
 print("ENTRAINEMENT DU MODELE DE PRODUCTION - CATBOOST (MAISONS & APPARTEMENTS)")
 print("-" * 50)
 
-RACINE_PROJET = Path(__file__).resolve().parents[2]
+RACINE_PROJET = Path(__file__).resolve().parents[3]
 load_dotenv(RACINE_PROJET / ".env")
 CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
 gdf_littoral = gpd.read_file(CHEMIN_GPKG)
