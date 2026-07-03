@@ -506,7 +506,7 @@ for type_bien, df_bien in datasets.items():
     for nom_q, alpha in quantiles.items():
         m = CatBoostRegressor(
             loss_function=f'Quantile:alpha={alpha}',
-            iterations = 4000, learning_rate=0.04,depth=8,
+            iterations = 1000, learning_rate=0.04,depth=8,
             random_seed=42,early_stopping_rounds=50,verbose=False
             # Si on veut utiliser Optuna, il faudra enlever Learning_rate et depth et ajoute la ligne en dessous
             # meilleurs**

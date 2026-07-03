@@ -291,7 +291,7 @@ def traiter_type(filtre_type, suffixe_type):
     donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
     plancher = max(donnees['prix_m2'].quantile(0.01), 800)
-    plafond = min(donnees['prix_m2'].quantile(0.99), 15000)
+    plafond = min(donnees['prix_m2'].quantile(0.99), 25000)
     donnees_propres = donnees[
         (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) &
         (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
@@ -427,7 +427,7 @@ def traiter_type(filtre_type, suffixe_type):
 
     # --- Entrainement final + Duan (modele sur la moyenne) ---
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
-    modele = CatBoostRegressor(n_estimators=4000, learning_rate=0.04, max_depth=8, l2_leaf_reg=1.0,
+    modele = CatBoostRegressor(n_estimators=1000, learning_rate=0.04, max_depth=8, l2_leaf_reg=1.0,
                                early_stopping_rounds=50, random_state=42, verbose=False)
     modele.fit(X_tr, y_tr, eval_set=(X_val, y_val), verbose=False)
 
