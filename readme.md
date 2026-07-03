@@ -6,6 +6,28 @@ avec intervalle de confiance. Construit sur des données publiques françaises
 
 ---
 
+## Arborescence du projet
+
+```
+EstimationIA/
+├── carte/                  Code HTML des cartes (heatmaps) generees
+├── data/                   Fichiers de donnees (.csv, .gpkg, .json)
+├── env/                    Environnement virtuel (dependances du projet)
+├── modele_production/      Artefacts du modele entraine (.cbm/.json, features.json, contexte_*.pkl)
+├── out/                    Sorties : graphes (SHAP, correlation...) et resultats (.pkl)
+├── src/                    Code source
+│   ├── genCarte/           Generation des cartes .html (heatmaps)
+│   ├── graphe/             Generation des graphes (correlation, SHAP, etc.)
+│   ├── ML/                 Tout le code Machine Learning (pipelines, entrainement, estimation, API)
+│   └── script/             Scripts d'import des fichiers CSV vers les tables SQL
+├── .env                    Mot de passe de la base (non versionne)
+├── .gitignore
+├── README.md
+└── requirements.txt
+```
+
+---
+
 ## Installation
 
 Il est recommandé d'utiliser un environnement virtuel Python.
@@ -59,7 +81,9 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `donnees_transport` | [Gares ferroviaires de tous types](https://www.data.gouv.fr/datasets/gares-ferroviaires-de-tous-types-exploitees-ou-non) | Distance à la gare | |
 | `infrastructures_hopitaux` | [Localisation des hôpitaux (OpenStreetMap)](https://www.data.gouv.fr/datasets/localisation-des-hopitaux-dans-openstreetmap) | Distance à l'hôpital | |
 | `monuments_historiques` | [Immeubles protégés au titre des monuments historiques](https://www.data.gouv.fr/datasets/immeubles-proteges-au-titre-des-monuments-historiques-2) | Distance au monument | |
+| `infrastructures_mairies` | [Annuaire de l'administration (service-public.gouv.fr)](https://www.data.gouv.fr/datasets/lannuaire-de-ladministration-base-de-donnees-locales) | Distance à la mairie (proxy centre-ville) | Filtré sur `type_service_local = mairie` ; ~35 000 communes |
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
+| `referentiel_communes` | [Référentiel géographique français (communes, aires urbaines...)](https://www.data.gouv.fr/datasets/referentiel-geographique-francais-communes-unites-urbaines-aires-urbaines-departements-academies-regions-1) | Aires d'attraction des villes → potentiel urbain | Poids d'un pôle = nombre de communes de son aire |
 
 ### Sources testées mais écartées
 
@@ -67,6 +91,11 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
   (nombre d'étages, nombre de logements, hauteur). Corrélations avec le prix
   quasi nulles (< 0,08 en valeur absolue), attributs souvent mal renseignés.
   Écartée après mesure : gain négligeable pour un coût d'intégration élevé.
+- **Distance à la mairie** (proxy de centralité) : testée sur les départements 34
+  et 69. Corrélation quasi nulle en intérieur (−0,065 sur Lyon) et brouillée par
+  l'effet littoral sur le 34. Déjà captée par des proxies plus efficaces (distance
+  à l'hôpital, densité de ventes). Écartée ; le potentiel urbain (voir Phase 4)
+  s'est révélé bien plus pertinent pour l'influence des villes.
 - [Référentiel des arrêts — arrêts transporteur](https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur)
 - [Dans ma rue — anomalies signalées](https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees) (Paris)
 - [Les commerces par commune ou arrondissement — base permanente des équipements IDF](https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf) (Île-de-France)
@@ -124,7 +153,7 @@ répond à un choix concret rencontré pendant le développement.
 
 ### Phase 2 — Nettoyage et filtrage des aberrations
 
-- Ne garder que les ventes **à un ou deux lots** (`nombre_lots <= 2`). Les ventes à 2 lots sont majoritairement un bien + sa dépendance directe (cave, parking) : les inclure récupère ~30 % de données supplémentaires sur les appartements et fait baisser le MAE de ~11 %, sans dégrader la couverture. Les lots plus nombreux (regroupements hétérogènes) restent exclus. *Décision testée et validée par la mesure sur le département 34.*
+- Ne garder que les ventes **à trois lots maximum** (`nombre_lots <= 3`). Les ventes à 2 lots sont majoritairement un bien + sa dépendance directe (cave, parking), au prix/m² cohérent : les inclure récupère ~30 % de données supplémentaires sur les appartements et fait baisser le MAE de ~11 %, sans dégrader la couverture. *Décision testée et validée par la mesure sur le département 34.*
 - Limiter aux types `Maison` et `Appartement`.
 - Borner le prix au m² pour couper les artefacts de calcul (faux prix à ~24 000 €/m²).
 - Filtrer les aberrations de prix **par type de bien** : maisons et appartements
@@ -151,9 +180,12 @@ répond à un choix concret rencontré pendant le développement.
   calculées depuis le fichier littoral. En zone côtière, l'oubli de ces features
   fait chuter le R² des appartements de ~46 % à ~25 %. *Leçon : la qualité des
   features prime sur le réglage du modèle.*
-- **Distance à la mairie** (proxy de centralité / centre-ville), la mairie étant
-  quasi toujours au cœur historique de la commune. Extraite de l'annuaire de
-  l'administration.
+- **Potentiel urbain** (modèle de gravité) : influence pondérée des grandes villes,
+  calculée comme la somme sur les pôles (aires d'attraction) de `poids / distance`,
+  le poids étant la taille de l'aire. Capte l'attractivité des métropoles voisines,
+  décisive pour les départements périurbains ou frontaliers. Sur le département 01
+  (entre Lyon et Genève), corrélation de +0,20 avec le prix ; inclut des pôles
+  étrangers ajoutés manuellement (Genève, Lausanne) pour l'effet transfrontalier.
 - Les voisinages sont calculés **entre biens du même type** (un appartement est
   comparé aux appartements voisins, pas aux maisons).
 - **Règle d'or** : toute feature dérivée des prix est calculée **sur le train uniquement**, pour éviter le *data leakage*.
