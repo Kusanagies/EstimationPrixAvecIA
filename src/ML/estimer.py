@@ -74,8 +74,16 @@ arbre_mer =_arbre_ou_none(CTX_REF.get('points_mer'))
 arbre_lac =_arbre_ou_none(CTX_REF.get('points_lac'))
 arbre_estuaire = _arbre_ou_none(CTX_REF.get('points_estuaire'))
 
-print("Moteur d'estimation pret.")
+poles_data = CTX_REF.get('poles_urbains')
 
+if poles_data is not None and len(poles_data) >0:
+    arbre_poles = BallTree(np.deg2rad(poles_data[:,:2]), metric='haversine')
+    poids_poles = poles_data[:,2].astype(float)
+else : 
+    arbre_poles = None
+    poids_poles = None
+
+print("Moteur d'estimation pret.")
 
 # ==========================================
 # GEOCODAGE (adresse -> lat, lon, code INSEE)
@@ -168,10 +176,35 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
             return med_glob.get(col, 0.0)
         return v
 
-    # prix_m2_voisins (specifique au type de bien)
-    k = min(15, len(prix_all))
-    _, idx = arbre_v.query(point_rad, k=k)
-    prix_voisins = float(np.median(prix_all[idx[0]]))
+    # prix_m2_voisins (version B : pondere par distance + surface comparable)
+    surface_all = CTX.get('surface_all')
+    k = min(40, len(prix_all))
+    dist_v, idx = arbre_v.query(point_rad, k=k)
+    dist_v = dist_v[0]
+    idx = idx[0]
+    if surface_all is not None:
+        prix_v = prix_all[idx]
+        surf_v = surface_all[idx]
+        borne_bas, borne_haut = surface * 0.6, surface * 1.4
+        masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
+        if masque.sum() >= 3:
+            d, p = dist_v[masque], prix_v[masque]
+        else:
+            d, p = dist_v, prix_v
+        poids = 1.0 / (d + 1e-9)
+        prix_voisins = float(np.sum(poids * p) / np.sum(poids))
+    else:
+        poids = 1.0 / (dist_v + 1e-9)
+        prix_voisins = float(np.sum(poids * prix_all[idx]) / np.sum(poids))
+
+    # potentiel_urbain (influence ponderee des poles)
+    if arbre_poles is not None:
+        k_p = min(20, len(poids_poles))
+        dist_rad_p, idx_p = arbre_poles.query(point_rad, k=k_p)
+        dist_m_p = dist_rad_p[0] * RAYON_TERRE
+        potentiel_urbain = float(np.sum(poids_poles[idx_p[0]] / (dist_m_p + 5000)))
+    else:
+        potentiel_urbain = 0.0  
 
     # densite
     rayon_rad = 1000 / RAYON_TERRE
@@ -181,7 +214,7 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
     code_section = recuperer_section(lat, lon)
     if code_section is not None and code_section in CTX['med_section']:
         prix_section = CTX['med_section'][code_section]
-    elif code_insee in CTX['med_section']:
+    elif code_insee in CTX['med_commune']:
         prix_section = CTX['med_commune'][code_insee]
     else: 
         prix_section = CTX['med_globale']
@@ -220,6 +253,7 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
         'dist_universite_m': _distance_min(arbre_universites, point_rad),
         'prix_m2_voisins': prix_voisins,
         'densite_ventes_1km': densite,
+        'potentiel_urbain': potentiel_urbain,       
         'prix_m2_section': prix_section,
         'nb_ventes_section': nb_ventes_sec,
         'pct_dpe_A': val_commune('pct_dpe_A'),
