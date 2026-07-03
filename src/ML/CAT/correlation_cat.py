@@ -258,8 +258,40 @@ poles = pd.read_sql("""
     GROUP BY aav_nom HAVING poids_aire >= 10
 """, con=moteur)
 poles_etrangers = pd.DataFrame([
-    {'aav_nom': 'Genève', 'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 200},
-    {'aav_nom': 'Lausanne', 'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 80},
+    # --- Suisse (frontière est : Ain, Haute-Savoie, Doubs, Jura, Territoire de Belfort) ---
+    {'aav_nom': 'Genève',    'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 250},
+    {'aav_nom': 'Lausanne',  'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 90},
+    {'aav_nom': 'Bâle',      'latitude': 47.5596, 'longitude': 7.5886, 'poids_aire': 150},
+    {'aav_nom': 'Neuchâtel', 'latitude': 46.9925, 'longitude': 6.9310, 'poids_aire': 40},
+
+    # --- Luxembourg (frontière nord-est : Moselle, Meurthe-et-Moselle) ---
+    {'aav_nom': 'Luxembourg','latitude': 49.6116, 'longitude': 6.1319, 'poids_aire': 200},
+
+    # --- Allemagne (frontière est : Bas-Rhin, Haut-Rhin, Moselle) ---
+    {'aav_nom': 'Sarrebruck','latitude': 49.2402, 'longitude': 6.9969, 'poids_aire': 120},
+    {'aav_nom': 'Karlsruhe', 'latitude': 49.0069, 'longitude': 8.4037, 'poids_aire': 130},
+    {'aav_nom': 'Fribourg-en-Brisgau', 'latitude': 47.9990, 'longitude': 7.8421, 'poids_aire': 110},
+
+    # --- Belgique (frontière nord : Nord, Ardennes, etc.) ---
+    {'aav_nom': 'Bruxelles', 'latitude': 50.8503, 'longitude': 4.3517, 'poids_aire': 300},
+    {'aav_nom': 'Charleroi', 'latitude': 50.4114, 'longitude': 4.4446, 'poids_aire': 90},
+    {'aav_nom': 'Liège',     'latitude': 50.6326, 'longitude': 5.5797, 'poids_aire': 100},
+    {'aav_nom': 'Mons',      'latitude': 50.4542, 'longitude': 3.9563, 'poids_aire': 50},
+
+    # --- Italie (frontière sud-est : Alpes-Maritimes, Haute-Savoie, Savoie) ---
+    {'aav_nom': 'Turin',     'latitude': 45.0703, 'longitude': 7.6869, 'poids_aire': 250},
+    {'aav_nom': 'Vintimille','latitude': 43.7900, 'longitude': 7.6083, 'poids_aire': 30},
+
+    # --- Monaco (frontière sud-est : Alpes-Maritimes) ---
+    {'aav_nom': 'Monaco',    'latitude': 43.7384, 'longitude': 7.4246, 'poids_aire': 120},
+
+    # --- Espagne (frontière sud-ouest : Pyrénées-Atlantiques, Pyrénées-Orientales) ---
+    {'aav_nom': 'Barcelone', 'latitude': 41.3874, 'longitude': 2.1686, 'poids_aire': 300},
+    {'aav_nom': 'Saint-Sébastien', 'latitude': 43.3183, 'longitude': -1.9812, 'poids_aire': 70},
+    {'aav_nom': 'Gérone',    'latitude': 41.9794, 'longitude': 2.8214, 'poids_aire': 40},
+
+    # --- Andorre (frontière sud : Ariège, Pyrénées-Orientales) ---
+    {'aav_nom': 'Andorre-la-Vieille', 'latitude': 42.5063, 'longitude': 1.5218, 'poids_aire': 25},
 ])
 poles = pd.concat([poles, poles_etrangers], ignore_index=True)
 
