@@ -65,7 +65,7 @@ if departement == 'FRANCE':
     dep_infra = "FRANCE"
     nom_zone = "France"
 else:
-    filtre_dvf = f"LEFT(code_commune, 2) = '{departement}'"
+    filtre_dvf = f"code_departement = '{departement}'"
     filtre_dpe = f"LEFT(code_insee_ban, 2) = '{departement}'"
     filtre_rev = f"LEFT(code_commune, 2) = '{departement}'"
     dep_infra = departement
@@ -362,7 +362,7 @@ for type_bien, df_bien in datasets.items():
     for nom, alpha in quantiles.items():
         m = CatBoostRegressor(
             loss_function=f'Quantile:alpha={alpha}',
-            iterations=4000, learning_rate=0.05, depth=6,
+            iterations=4000, learning_rate=0.04, depth=8,
             l2_leaf_reg=3.0,
             random_seed=42, early_stopping_rounds=50, verbose=False
         )

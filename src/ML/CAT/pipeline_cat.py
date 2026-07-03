@@ -427,7 +427,7 @@ def traiter_type(filtre_type, suffixe_type):
 
     # --- Entrainement final + Duan (modele sur la moyenne) ---
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
-    modele = CatBoostRegressor(n_estimators=4000, learning_rate=0.05, max_depth=6, l2_leaf_reg=1.0,
+    modele = CatBoostRegressor(n_estimators=4000, learning_rate=0.04, max_depth=8, l2_leaf_reg=1.0,
                                early_stopping_rounds=50, random_state=42, verbose=False)
     modele.fit(X_tr, y_tr, eval_set=(X_val, y_val), verbose=False)
 

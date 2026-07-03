@@ -139,6 +139,19 @@ revenus = pd.read_sql(f"""
 for col in ['median_revenu_disponible', 'indice_gini', 'pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col], errors='coerce')
 
+# Poles urbains (aires d'attraction) - national, pour le potentiel urbain
+poles = pd.read_sql("""
+    SELECT aav_nom, AVG(latitude) AS latitude, AVG(longitude) AS longitude, COUNT(*) AS poids_aire
+    FROM referentiel_communes
+    WHERE aav_nom IS NOT NULL AND aav_nom != 'SO' AND latitude IS NOT NULL
+    GROUP BY aav_nom HAVING poids_aire >= 10
+""", con=moteur)
+poles_etrangers = pd.DataFrame([
+    {'aav_nom': 'Genève', 'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 200},
+    {'aav_nom': 'Lausanne', 'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 80},
+])
+poles = pd.concat([poles, poles_etrangers], ignore_index=True)
+
 # ==========================================
 # 2. FUSION GLOBALE
 # ==========================================
@@ -194,6 +207,17 @@ for classement, nom_colonne in classements.items():
     sous = gdf_littoral[gdf_littoral['CLASSEMENT'] == classement]
     df_points = extraire_points_contour(sous)
     calculer_distance_min(df_points, nom_colonne)
+
+
+# Potentiel urbain (gravite : somme ponderee de l'influence des poles)
+poles_rad = np.deg2rad(poles[['latitude', 'longitude']].values)
+poids_poles = poles['poids_aire'].values.astype(float)
+arbre_poles = BallTree(poles_rad, metric='haversine')
+k_poles = min(20, len(poles))
+dist_rad_p, idx_p = arbre_poles.query(points_rad, k=k_poles)
+dist_m_p = dist_rad_p * RAYON_TERRE_METRES
+donnees['potentiel_urbain'] = np.sum(poids_poles[idx_p] / (dist_m_p + 5000), axis=1)
+
 # ==========================================
 # 4. NETTOYAGE + FEATURES
 # ==========================================
@@ -228,7 +252,7 @@ donnees_propres['code_section'] = donnees_propres['id_parcelle'].str[:10]
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
 colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche',
                      'log_surface', 'surface_par_piece',
-                     'surface_terrain', 'log_terrain'] + colonnes_revenus
+                     'surface_terrain', 'log_terrain', 'potentiel_urbain'] + colonnes_revenus
 
 # Note : On retire 'est_maison' des features car chaque modele n'aura qu'un seul type
 features_base = ['latitude', 'longitude', 'nombre_pieces_principales',
@@ -263,18 +287,36 @@ for type_bien, df_bien in datasets.items():
 
     coords_all = np.deg2rad(df_bien[['latitude', 'longitude']])
     prix_all = df_bien['prix_m2'].values
+    surface_all = df_bien['surface_reelle_bati'].values
     arbre_voisins = BallTree(coords_all, metric='haversine')
 
-    k_voisins = min(16, len(coords_all))
+    # prix_m2_voisins : pondere par distance ET filtre par surface comparable (version B)
+    def voisins_surface_ponderes(distances, indices, surface_bien):
+        # On exclut le 1er voisin (le bien lui-meme, present dans coords_all)
+        distances = distances[1:]
+        indices = indices[1:]
+        if len(indices) == 0:
+            return np.nan
+        prix_v = prix_all[indices]
+        surf_v = surface_all[indices]
+        borne_bas, borne_haut = surface_bien * 0.6, surface_bien * 1.4
+        masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
+        if masque.sum() >= 3:
+            d, p = distances[masque], prix_v[masque]
+        else:
+            d, p = distances, prix_v
+        poids = 1.0 / (d + 1e-9)
+        return np.sum(poids * p) / np.sum(poids)
+    
+    
+    k_voisins = min(41, len(coords_all))
     dist_v, idx_v = arbre_voisins.query(coords_all, k=k_voisins)
 
     if k_voisins > 1:
-        # Moyenne pondérée par la distance : les voisins proches comptent plus.
-        # On exclut le 1er voisin (le bien lui-même, distance ~0).
-        dist_voisins = dist_v[:, 1:]
-        prix_voisins = prix_all[idx_v[:, 1:]]
-        poids = 1.0 / (dist_voisins + 1e-9)
-        X['prix_m2_voisins'] = np.sum(poids * prix_voisins, axis=1) / np.sum(poids, axis=1)
+        X['prix_m2_voisins'] = [
+            voisins_surface_ponderes(dist_v[i], idx_v[i], surface_all[i])
+            for i in range(len(idx_v))
+        ]
     else:
         X['prix_m2_voisins'] = prix_all
 
@@ -310,7 +352,7 @@ for type_bien, df_bien in datasets.items():
     for nom, alpha in quantiles.items():
         m = xgb.XGBRegressor(
             objective='reg:quantileerror', quantile_alpha=alpha,
-            n_estimators=2500, learning_rate=0.02, max_depth=6,
+            n_estimators=1000, learning_rate=0.04, max_depth=8,
             subsample=0.8, colsample_bytree=0.8,
             min_child_weight=3, reg_lambda=1.0,
             early_stopping_rounds=50, random_state=42, n_jobs=-1
@@ -335,6 +377,8 @@ for type_bien, df_bien in datasets.items():
     contexte = {
         'arbre_voisins_data': coords_all.values,
         'prix_all': prix_all,
+        'surface_all': surface_all,
+        'poles_urbains': poles[['latitude', 'longitude', 'poids_aire']].values,
         'med_section': med_section.to_dict(),
         'med_commune': med_commune.to_dict(),
         'med_globale': float(med_globale),
@@ -349,7 +393,7 @@ for type_bien, df_bien in datasets.items():
         'medianes_globales': {c: float(donnees[c].median()) for c in
                               colonnes_dpe + colonnes_chauffage + colonnes_revenus},
         'rayon_terre': RAYON_TERRE_METRES,
-        'points_mec':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Mer']),
+        'points_mer':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Mer']),
         'points_lac':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Lac']),
         'points_estuaire':extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Estuaire'])
     }

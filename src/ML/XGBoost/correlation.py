@@ -170,6 +170,18 @@ revenus = pd.read_sql(f"SELECT code_commune, median_revenu_disponible,indice_gin
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col], errors='coerce')
 
+poles = pd.read_sql("""
+    SELECT aav_nom, AVG(latitude) AS latitude, AVG(longitude) AS longitude, COUNT(*) AS poids_aire
+    FROM referentiel_communes
+    WHERE aav_nom IS NOT NULL AND aav_nom != 'SO' AND latitude IS NOT NULL
+    GROUP BY aav_nom HAVING poids_aire >= 10
+""", con=moteur)
+poles_etrangers = pd.DataFrame([
+    {'aav_nom': 'Genève', 'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 200},
+    {'aav_nom': 'Lausanne', 'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 80},
+])
+poles = pd.concat([poles, poles_etrangers], ignore_index=True)
+
 # ==========================================
 # 2. FUSION ET DISTANCES GLOBALES
 # ==========================================
@@ -222,6 +234,15 @@ for classement,nom_colonne in classements.items():
     df_points = extraire_points_contour(sous)
     calculer_distance_min(df_points,nom_colonne)
 
+
+poles_rad = np.deg2rad(poles[['latitude', 'longitude']].values)
+poids_poles = poles['poids_aire'].values.astype(float)
+arbre_poles = BallTree(poles_rad, metric='haversine')
+k_poles = min(20, len(poles))
+dist_rad_p, idx_p = arbre_poles.query(points_rad, k=k_poles)
+dist_m_p = dist_rad_p * RAYON_TERRE_METRES
+donnees['potentiel_urbain'] = np.sum(poids_poles[idx_p] / (dist_m_p + 5000), axis=1)
+
 # ==========================================
 # 3. NETTOYAGE GLOBAL ET CORRECTION DVF
 # ==========================================
@@ -256,7 +277,7 @@ donnees_propres['code_section'] = donnees_propres['id_parcelle'].str[:10]
 
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
 colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche', 'log_surface','surface_par_piece',
-                     'surface_terrain','log_terrain', 'median_revenu_disponible','indice_gini','pct_minima_sociaux']
+                     'surface_terrain','log_terrain', 'median_revenu_disponible','indice_gini','pct_minima_sociaux','potentiel_urbain']
 
 features_base = ['latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente','mois_vente','a_terrain'] \
                 + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
@@ -370,7 +391,7 @@ for type_bien, df_bien in datasets.items():
     for nom_q, alpha in quantiles.items():
         m = xgb.XGBRegressor(
             objective='reg:quantileerror', quantile_alpha=alpha,
-            n_estimators=4000, learning_rate=0.05, max_depth=6,
+            n_estimators=1000, learning_rate=0.04, max_depth=8,
             subsample=0.8, colsample_bytree=0.8,
             min_child_weight=3, reg_lambda=1.0,
             tree_method = 'hist',

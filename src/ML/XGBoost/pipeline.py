@@ -122,7 +122,7 @@ if departement == 'FRANCE' :
     if choix_local == 'TOUS' :
         dossier_graphes = DOSSIER_OUT / "FRANCE"
     else : 
-        dossier_graphes = DOSSIER_OUT / choix_local[:3] / choix_local
+        dossier_graphes = DOSSIER_OUT / choix_local[:2] / choix_local
 else :
     if choix_local == 'TOUS':
         dossier_graphes = DOSSIER_OUT / departement
@@ -210,6 +210,20 @@ revenus = pd.read_sql(f"""
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col],errors='coerce')
 
+
+# Poles urbains (aires d'attraction) - national, pour le potentiel urbain
+poles = pd.read_sql("""
+    SELECT aav_nom, AVG(latitude) AS latitude, AVG(longitude) AS longitude, COUNT(*) AS poids_aire
+    FROM referentiel_communes
+    WHERE aav_nom IS NOT NULL AND aav_nom != 'SO' AND latitude IS NOT NULL
+    GROUP BY aav_nom HAVING poids_aire >= 10
+""", con=moteur)
+poles_etrangers = pd.DataFrame([
+    {'aav_nom': 'Genève', 'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 200},
+    {'aav_nom': 'Lausanne', 'latitude': 46.5197, 'longitude': 6.6323, 'poids_aire': 80},
+])
+poles = pd.concat([poles, poles_etrangers], ignore_index=True)
+
 # ==========================================
 # 2. FUSION DES DONNEES
 # ==========================================
@@ -265,6 +279,14 @@ for classement, nom_colonne in classements.items():
     df_points = extraire_points_contour(sous)
     calculer_distance_min(df_points,nom_colonne)
 
+# Potentiel urbain (gravite : influence ponderee des poles)
+poles_rad = np.deg2rad(poles[['latitude', 'longitude']].values)
+poids_poles = poles['poids_aire'].values.astype(float)
+arbre_poles = BallTree(poles_rad, metric='haversine')
+k_poles = min(20, len(poles))
+dist_rad_p, idx_p = arbre_poles.query(maisons_rad, k=k_poles)
+dist_m_p = dist_rad_p * RAYON_TERRE_METRES
+donnees['potentiel_urbain'] = np.sum(poids_poles[idx_p] / (dist_m_p + 5000), axis=1)
 # ==========================================
 # 4. NETTOYAGE ET FEATURE ENGINEERING
 # ==========================================
@@ -311,7 +333,7 @@ for col in colonnes_revenus:
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
 colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche',
                      'log_surface','surface_par_piece',
-                     'surface_terrain','log_terrain',
+                     'surface_terrain','log_terrain', 'potentiel_urbain',
                      'median_revenu_disponible','indice_gini','pct_minima_sociaux']
 
 
@@ -338,23 +360,13 @@ else:
     X_train, y_train = X[train_mask], y[train_mask]
     X_test, y_test = X[test_mask], y[test_mask]
 
-# Calcule propre de prix_m2_voisins (sans leakage)
-# Les voisins sont cherches uniquement dans le train
-coords_train = np.deg2rad(donnees_propres.loc[X_train.index,['latitude','longitude']])
-prix_train = donnees_propres.loc[X_train.index,'prix_m2'].values
-arbre_voisins = BallTree(coords_train,metric='haversine')
-
-
-# --- prix_m2_voisins : pondéré par distance ET filtré par surface comparable ---
-# On récupère la surface des biens du train (alignée sur coords_train)
+# --- prix_m2_voisins : pondere par distance ET filtre par surface comparable (version B) ---
+coords_train = np.deg2rad(donnees_propres.loc[X_train.index, ['latitude','longitude']])
+prix_train = donnees_propres.loc[X_train.index, 'prix_m2'].values
 surface_train = donnees_propres.loc[X_train.index, 'surface_reelle_bati'].values
+arbre_voisins = BallTree(coords_train, metric='haversine')
 
 def voisins_surface_ponderes(distances, indices, surface_bien, exclure_premier=False):
-    """
-    Parmi les voisins géographiques, ne garde que ceux de surface comparable
-   (±40 %), puis fait une moyenne pondérée par la distance.
-    Repli sur tous les voisins si aucun de surface comparable.
-    """
     if exclure_premier:
         distances = distances[1:]
         indices = indices[1:]
@@ -362,27 +374,25 @@ def voisins_surface_ponderes(distances, indices, surface_bien, exclure_premier=F
         return np.nan
     prix_v = prix_train[indices]
     surf_v = surface_train[indices]
-    # Masque : voisins dont la surface est dans ±40 % de celle du bien
     borne_bas, borne_haut = surface_bien * 0.6, surface_bien * 1.4
     masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
-    if masque.sum() >= 3:   # assez de voisins comparables → on les utilise
+    if masque.sum() >= 3:
         d, p = distances[masque], prix_v[masque]
-    else:                    # repli : pas assez de comparables → tous les voisins
-        d, p = distances, prix_v
+    else:
+       d, p = distances, prix_v
     poids = 1.0 / (d + 1e-9)
     return np.sum(poids * p) / np.sum(poids)
-# On cherche PLUS de voisins (40) car le filtre surface va en retirer
+
 k_train = min(41, len(coords_train))
 dist_tr, idx_tr = arbre_voisins.query(coords_train, k=k_train)
 surface_bien_train = X_train['surface_reelle_bati'].values
-
 voisins_train = [
     voisins_surface_ponderes(dist_tr[i], idx_tr[i], surface_bien_train[i], exclure_premier=True)
     for i in range(len(idx_tr))
 ]
 
 k_test = min(40, len(coords_train))
-coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude', 'longitude']])
+coords_test = np.deg2rad(donnees_propres.loc[X_test.index, ['latitude','longitude']])
 dist_te, idx_te = arbre_voisins.query(coords_test, k=k_test)
 surface_bien_test = X_test['surface_reelle_bati'].values
 voisins_test = [
@@ -467,7 +477,7 @@ modeles_q = {}
 for nom_q,alpha in quantiles.items():
     m = xgb.XGBRegressor(
         objective='reg:quantileerror',quantile_alpha = alpha,
-        n_estimators = 4000, learning_rate=0.02, max_depth=6,
+        n_estimators = 1000, learning_rate=0.04, max_depth=8,
         subsample=0.8, colsample_bytree=0.8,
         min_child_weight=3,reg_lambda = 1.0,
         tree_method='hist',
