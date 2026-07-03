@@ -291,7 +291,7 @@ def traiter_type(filtre_type, suffixe_type):
     donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
     plancher = max(donnees['prix_m2'].quantile(0.01), 800)
-    plafond = min(donnees['prix_m2'].quantile(0.99), 25000)
+    plafond = min(donnees['prix_m2'].quantile(0.99), 15000)
     donnees_propres = donnees[
         (donnees['prix_m2'] >= plancher) & (donnees['prix_m2'] <= plafond) &
         (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
