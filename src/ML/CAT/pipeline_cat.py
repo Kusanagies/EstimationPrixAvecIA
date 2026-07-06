@@ -457,39 +457,56 @@ def traiter_type(filtre_type, suffixe_type):
     print(f"Stabilite (ecart-type valid)    : {cv['test_score'].std():.3f}")
     print("=" * 50)
 
-    # --- Entrainement final + Duan (modele sur la moyenne) ---
     X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
-    modele = CatBoostRegressor(n_estimators=1000, learning_rate=0.04, max_depth=8, l2_leaf_reg=1.0,
-                               early_stopping_rounds=50, random_state=42, verbose=False)
-    modele.fit(X_tr, y_tr, eval_set=(X_val, y_val), verbose=False)
 
-    pred_val_log = modele.predict(X_val)
-    residus_val = y_val.values - pred_val_log
-    facteur_duan = np.mean(np.exp(residus_val))
-    print(f"\nFacteur de correction de duan : {facteur_duan:.4f}")
+    quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
+    modeles_q = {}
+    for nom_q, alpha in quantiles.items():
+        m = CatBoostRegressor(
+            loss_function=f'Quantile:alpha={alpha}',
+            iterations=1000, learning_rate=0.04, depth=8, l2_leaf_reg=1.0,
+            early_stopping_rounds=50, random_seed=42, verbose=False
+        )
+        m.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
+        modeles_q[nom_q] = m
 
-    predictions_log = modele.predict(X_test)
+    # Le modele median sert de reference (SHAP, courbe, arret)
+    modele = modeles_q['median']
+
+    pred_bas_log = modeles_q['bas'].predict(X_test)
+    pred_med_log = modeles_q['median'].predict(X_test)
+    pred_haut_log = modeles_q['haut'].predict(X_test)
+
     prix_reels_euros = np.exp(y_test)
-    prix_predits_euros = np.exp(predictions_log) * facteur_duan
+    prix_bas = np.exp(pred_bas_log)
+    prix_predits_euros = np.exp(pred_med_log)
+    prix_haut = np.exp(pred_haut_log)
+
+    b = np.minimum(prix_bas, prix_haut)
+    h = np.maximum(prix_bas, prix_haut)
+    prix_bas, prix_haut = b, h
+
 
     # --- Sauvegarde resultats.pkl (un par type) ---
     dossier_graphes = dossier_base / suffixe_type
     dossier_graphes.mkdir(parents=True, exist_ok=True)
 
     resultats = {
+        'modeles_q': modeles_q,
         'modele': modele,
         'X_test': X_test,
         'y_test': y_test,
         'prix_reels_euros': prix_reels_euros,
         'prix_predits_euros': prix_predits_euros,
-        'facteur_duan': facteur_duan,
+        'prix_bas': prix_bas,
+        'prix_haut': prix_haut,
         'features': features,
         'nom_zone': nom_zone,
         'type_bien': suffixe_type,
         'dossier_graphes': str(dossier_graphes),
         'profil_test': donnees_propres.loc[X_test.index, [
-            'code_commune','prix_m2','surface_reelle_bati','surface_terrain',
-            'type_local','latitude','longitude'
+            'code_commune', 'prix_m2', 'surface_reelle_bati', 'surface_terrain',
+            'type_local', 'latitude', 'longitude'
         ]],
     }
     with open(dossier_graphes / "resultats.pkl", "wb") as f:
@@ -504,8 +521,12 @@ def traiter_type(filtre_type, suffixe_type):
     erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros) / prix_reels_euros
     pct_10 = np.mean(erreur_rel <= 0.10) * 100
     pct_20 = np.mean(erreur_rel <= 0.20) * 100
-    r2_log = r2_score(y_test, predictions_log)
+    r2_log = r2_score(y_test,pred_med_log)
     r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
+
+    dans_intervalle = (prix_reels_euros.values >= prix_bas) & (prix_reels_euros.values <= prix_haut)
+    couverture = np.mean(dans_intervalle) * 100
+    largeur_moyenne = np.mean(prix_haut - prix_bas)
 
     print("\n" + "=" * 50)
     print(f"RAPPORT DE PERFORMANCE CatBoost - {nom_zone.upper()}")
@@ -522,6 +543,8 @@ def traiter_type(filtre_type, suffixe_type):
     print(f"RMSE                        : {rmse:.0f} EUR/m²")
     print(f"Prédictions à plus ou moins 10 % du réel : {pct_10:.1f} %")
     print(f"Prédiction à plus ou moins 20 % du réel  : {pct_20:.1f} %")
+    print(f"Couverture intervalle 90% : {couverture:.1f} %")
+    print(f"Largeur moyenne intervalle : {largeur_moyenne:.0f} EUR/m2")
     print("=" * 50)
 
 
