@@ -34,7 +34,7 @@ moteur = create_engine("mysql+pymysql://root:1618@localhost:3306/EstimationIA")
 # 1. IMMOBILIER (DVF)
 maisons = pd.read_sql(f"""
     SELECT code_commune, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2, surface_reelle_bati, type_local, YEAR(date_mutation) AS annee_vente
-    FROM valeurs_foncieres
+    , MONTH(date_mutation) as mois_vente FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
       AND LEFT(code_commune, 2) = '{departement}'
       AND type_local IN ('Maison', 'Appartement');
@@ -100,17 +100,39 @@ print(f"Nombre de poles urbains : {len(poles)}")
 
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']: revenus[col] = pd.to_numeric(revenus[col],errors='coerce')
 
+# Taux macro (mensuel, national)
+taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FROM taux_macro", con=moteur)
+
+ages = pd.read_sql(f"""
+    SELECT code_departement, annee, pct_60_plus, pct_20_39
+    FROM demographie_ages_dep
+    WHERE code_departement = '{departement}'
+""", con=moteur)
+
 # ==========================================
 # 2. FUSION DES DONNEES
 # ==========================================
 print("Etape 2/6 : Fusion des donnees communales...")
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees,revenus, on='code_commune',how='left')
+donnees = pd.merge(donnees, taux,
+                   left_on=['annee_vente', 'mois_vente'],
+                   right_on=['annee', 'mois'], how='left')
+donnees['code_departement'] = donnees['code_commune'].str[:2]
+donnees = pd.merge(donnees, ages,
+                   left_on=['code_departement', 'annee_vente'],
+                   right_on=['code_departement', 'annee'], how='left')
 
 donnees = donnees[
     (donnees['latitude'].between(41,51)) &
     (donnees['longitude'].between(-5,10))
 ]
+
+# Remplissage des NaN des nouvelles features (par la mediane disponible)
+nouvelles_features = ['taux_credit_immo_fixe', 'taux_inflation', 'pct_60_plus', 'pct_20_39']
+for col in nouvelles_features:
+    if col in donnees.columns:
+        donnees[col] = donnees[col].fillna(donnees[col].median())
 # ==========================================
 # 3. CALCULS SPATIAUX (BallTree)
 # ==========================================
@@ -232,7 +254,10 @@ if colonnes_standard:
 # 5. MATRICE DE CORRELATION
 # ==========================================
 print("Etape 5/6 : Calcul de la matrice de correlation...")
-colonnes_finales = ['log_prix_m2', 'est_maison','prix_m2','est_appart','annee_vente','potentiel_urbain'] + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
+colonnes_finales = ['log_prix_m2', 'est_maison', 'prix_m2', 'est_appart', 'annee_vente',
+                    'potentiel_urbain', 'taux_credit_immo_fixe', 'taux_inflation',
+                    'pct_60_plus', 'pct_20_39'] \
+                   + colonnes_dpe + colonnes_standard + colonnes_dist + colonnes_revenus
 
 # Filtrage pour ne garder que les colonnes qui existent et qui ne sont pas constantes
 colonnes_valides = [col for col in colonnes_finales if col in donnees_propres.columns and donnees_propres[col].nunique() > 1]
