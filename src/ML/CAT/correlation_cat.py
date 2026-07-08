@@ -657,6 +657,7 @@ for type_bien, df_bien in datasets.items():
     courbe_train = evals['learn'][nom_metrique]
     courbe_val = evals['validation'][nom_metrique]
 
+    # Courbe d'apprentissage
     plt.figure(figsize=(10, 6))
     plt.plot(courbe_train,label='Entrainement',color='steelblue')
     plt.plot(courbe_val, label='Validation', color='darkorange')
@@ -671,6 +672,7 @@ for type_bien, df_bien in datasets.items():
     plt.close()
     print("Courbe d'apprentissage enregistree")
 
+    # Dependance plot
     variables_a_tracer = ['prix_m2_section', 'surface_reelle_bati', 'prix_m2_voisins', 'median_revenu_disponible']
     if type_bien == 'maisons':
         variables_a_tracer.append('surface_terrain')
@@ -688,6 +690,7 @@ for type_bien, df_bien in datasets.items():
         plt.close()
     print(f"Dependence plots enregistres pour {type_bien}")
 
+    # Graphe de prédiction réels vs predits
     plt.figure(figsize=(8, 8))
     plt.scatter(prix_reels_euros, prix_predits_euros, alpha=0.3, s=10)
     lims = [min(prix_reels_euros.min(), prix_predits_euros.min()), max(prix_reels_euros.max(), prix_predits_euros.max())]
@@ -700,6 +703,7 @@ for type_bien, df_bien in datasets.items():
     plt.tight_layout()
     plt.savefig(dossier_graphes / f"pred_vs_reels_CAT_{nom_fichier_base}_{type_bien}.png", dpi=150)
     plt.close()
+
 
     residus = prix_reels_euros.values - prix_predits_euros
     plt.figure(figsize=(9, 5))
@@ -714,6 +718,7 @@ for type_bien, df_bien in datasets.items():
     plt.savefig(dossier_graphes / f"residu_CAT_{nom_fichier_base}_{type_bien}.png", dpi=150)
     plt.close()
 
+    # Graphe d'intervalle
     ordre = np.argsort(prix_predits_euros)
     ech = ordre[::max(1, len(ordre)//300)]
 
