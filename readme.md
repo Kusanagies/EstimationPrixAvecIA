@@ -96,6 +96,24 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
   l'effet littoral sur le 34. Déjà captée par des proxies plus efficaces (distance
   à l'hôpital, densité de ventes). Écartée ; le potentiel urbain (voir Phase 4)
   s'est révélé bien plus pertinent pour l'influence des villes.
+- **Taux d'intérêt (crédit immobilier, inflation)** : taux mensuels nationaux
+  (crédit immo à taux fixe et variable, inflation, taux entreprises PME/ETI/GE),
+  joints aux ventes par année-mois. Testés sur les départements 34 et 01.
+  Corrélation avec le prix quasi nulle (< 0,06), MAIS **redondance quasi totale
+  avec `annee_vente`** (taux de crédit corrélé à +0,86 avec l'année). L'effet
+  économique est réel (taux hauts → capacité d'achat réduite → prix qui stagnent),
+  mais il est purement **temporel** : le modèle le capte déjà via `annee_vente`.
+  Écartés car ils n'ajoutent aucune information au-delà de l'année. Les taux
+  entreprises (PME/ETI/GE) sont de plus redondants avec le taux immobilier.
+- **Pyramide des âges (par département)** : parts des tranches d'âge (dont
+  `pct_60_plus`, `pct_20_39`) issues des estimations de population INSEE, jointes
+  par département et année. Testée sur les départements 34 et 01. **Corrélation
+  de +0,98 à +0,997 avec `annee_vente`** : sur un seul département, la structure
+  d'âge ne fait qu'évoluer lentement dans le temps, donc elle se confond avec
+  l'année. Corrélation avec le prix négligeable (< 0,05). Écartée pour la même
+  raison que les taux : redondante avec l'effet temporel déjà capté. *(Pourrait
+  avoir plus de sens à l'échelle France entière, où des départements âgés se
+  distinguent de départements jeunes — non retenue à ce stade.)*
 - [Référentiel des arrêts — arrêts transporteur](https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur)
 - [Dans ma rue — anomalies signalées](https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees) (Paris)
 - [Les commerces par commune ou arrondissement — base permanente des équipements IDF](https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf) (Île-de-France)
@@ -257,9 +275,12 @@ répond à un choix concret rencontré pendant le développement.
 - **Données individuelles manquantes** : DVF ne contient ni l'état du bien, ni l'étage, ni la vue — facteurs décisifs absents. Le haut de gamme (> 8000 €/m²) reste donc mal prédit, et la fourchette est large sur les appartements.
 - **DPE communal et non individuel** : l'appariement DPE↔vente n'atteignait que ~6 %, le profil énergétique est donc agrégé par commune.
 - **Revenus INSEE datés de 2021** : à mettre à jour si un millésime plus récent devient disponible.
-- **Pistes de features à plus fort potentiel** : distance au centre-ville/mairie
-  (centralité), prix des voisins pondéré par distance et tranche de surface,
-  tendance de marché locale (pertinente vu la stagnation des prix observée depuis 2023).
+- **Pistes de features à plus fort potentiel** : vraie section cadastrale via
+  l'API Carto de l'IGN (pour ne plus dégrader `prix_m2_section` en médiane
+  communale en production), extension du potentiel urbain aux départements
+  frontaliers (avec pôles étrangers). *Note : la centralité (mairie), les taux
+  d'intérêt et la pyramide des âges ont été testés puis écartés — voir « Sources
+  testées mais écartées ».*
 
 ---
 
