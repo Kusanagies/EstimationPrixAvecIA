@@ -129,8 +129,9 @@ print(f"Recherche des secteurs disponibles pour : {departement}...")
 if departement == 'FRANCE':
     condition_dep = "1=1"
 else:
-    condition_dep = f"code_departement = '{departement}'"
+    condition_dep = f"code_departement = '{departement}'" # code_departement table
 
+# Cherche les noms et codes des communes (n'affiche que les 15 premiers dans l'ordre avec celui qui a le plus de vente)
 query_communes = f"""
     SELECT code_commune, MAX(nom_commune) as nom_commune, COUNT(*) as volume_ventes
     FROM valeurs_foncieres
@@ -146,6 +147,7 @@ if len(df_communes) == 0:
     print(f"Erreur : Aucune donnee trouvee pour le secteur {departement}.")
     sys.exit()
 
+# Affichage des 15 premiers de la recherche précédente
 print(f"\nVoici les secteurs avec le plus de donnees pour {departement} :")
 for index, row in df_communes.iterrows():
     nom = str(row['nom_commune']).ljust(25)[:25]
@@ -197,6 +199,7 @@ temps_total_debut = time.time()
 # ==========================================
 print("Etape 1/4 : Extraction des donnees depuis SQL...")
 
+# Cherche dans la table DVF
 maisons = pd.read_sql(f"""
     SELECT code_commune, id_parcelle, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2,
            surface_reelle_bati, type_local, nombre_pieces_principales,
@@ -212,6 +215,8 @@ if len(maisons) == 0:
     print(f"Erreur : Aucune donnee trouvée.")
     sys.exit()
 
+# Recherche dans la table DPE, elle récupère : pct_dpe_A, pct_dpe_B, pct_dpe_C, pct_dpe_D, pct_dpe_E, pct_dpe_F, pct_dpe_G,
+#                                              pct_chauffage_elec, pct_chauffage_gaz, pct_chauffage_fioul, pct_chauffage_urbain
 dpe = pd.read_sql(f"""
     SELECT code_insee_ban,
            (SUM(CASE WHEN etiquette_dpe = 'A' THEN 1 ELSE 0 END) / COUNT(*)) * 100 AS pct_dpe_A,
@@ -230,8 +235,10 @@ dpe = pd.read_sql(f"""
     GROUP BY code_insee_ban;
 """, con=moteur)
 
+# Recherche dans la table donnees_transport et récupère toutes les lignes qui ne sont pas NULL 
 stations = pd.read_sql("SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur)
 
+# Recherche des lat,long des monuments historiques, infrastructures_hopitaux, et infrastructures_universités selon l'input de l'utilisateur
 if dep_infra == 'FRANCE':
     query_monuments = "SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;"
     query_hopitaux = "SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;"
@@ -246,17 +253,22 @@ hopitaux = pd.read_sql(query_hopitaux, con=moteur)
 universites = pd.read_sql(query_universites, con=moteur)
 
 filtre_rev = "1=1" if dep_infra == 'FRANCE' else (f"code_commune = '{choix_local}'" if choix_local != 'TOUS' and len(choix_local) == 5 else f"LEFT(code_commune,2) = '{dep_infra}'")
+
+# Recherche dans la table demographie_communes selon le filtre
 revenus = pd.read_sql(f"SELECT code_commune, median_revenu_disponible,indice_gini,pct_minima_sociaux FROM demographie_communes WHERE {filtre_rev};", con=moteur)
 
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col], errors='coerce')
 
+# Recherche dans la table referentiel_communes
 poles = pd.read_sql("""
     SELECT aav_nom, AVG(latitude) AS latitude, AVG(longitude) AS longitude, COUNT(*) AS poids_aire
     FROM referentiel_communes
     WHERE aav_nom IS NOT NULL AND aav_nom != 'SO' AND latitude IS NOT NULL
     GROUP BY aav_nom HAVING poids_aire >= 10
 """, con=moteur)
+
+# Input manuelle de ville influante en dehors de la France
 poles_etrangers = pd.DataFrame([
     # --- Suisse (frontière est : Ain, Haute-Savoie, Doubs, Jura, Territoire de Belfort) ---
     {'aav_nom': 'Genève',    'latitude': 46.2044, 'longitude': 6.1432, 'poids_aire': 250},
@@ -299,12 +311,15 @@ poles = pd.concat([poles, poles_etrangers], ignore_index=True)
 # 2. FUSION ET DISTANCES GLOBALES
 # ==========================================
 print("Etape 2/4 : Fusion et calculs spatiaux partagés...")
+
+# Fusion des données qu'on a récupérer sur les maisons, dpe, et les revenus
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
 
 RAYON_TERRE_METRES = 6371000
 points_rad = np.deg2rad(donnees[['latitude', 'longitude']])
 
+# Méthode de calcule de la distance à partir des long et lat
 def calculer_distance_min(df_points, nom_colonne):
     if len(df_points) > 0:
         infra_rad = np.deg2rad(df_points.iloc[:, 0:2])
@@ -314,6 +329,7 @@ def calculer_distance_min(df_points, nom_colonne):
     else:
         donnees[nom_colonne] = 999999
 
+# Calcule des distances pour dist_transport_m, dist_monument_m, et dist_hopital_m
 calculer_distance_min(stations, 'dist_transport_m')
 calculer_distance_min(monuments, 'dist_monument_m')
 calculer_distance_min(hopitaux, 'dist_hopital_m')
@@ -328,6 +344,7 @@ else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
 
+# Méthodes pour pouvoir récupérer les points (long, lat) des littoraux (mers,lacs, et estuaire)
 def extraire_points_contour(sous_gdf):
     points = []
     for geom in sous_gdf.geometry :
@@ -359,35 +376,75 @@ donnees['potentiel_urbain'] = np.sum(poids_poles[idx_p] / (dist_m_p + 5000), axi
 # 3. NETTOYAGE GLOBAL ET CORRECTION DVF
 # ==========================================
 print("Etape 3/4 : Nettoyage global et correction des biais...")
+
+# Trie des colonnes
 colonnes_dpe = ['pct_dpe_A', 'pct_dpe_B', 'pct_dpe_C', 'pct_dpe_D', 'pct_dpe_E', 'pct_dpe_F', 'pct_dpe_G']
 colonnes_chauffage = ['pct_chauffage_elec', 'pct_chauffage_gaz', 'pct_chauffage_fioul', 'pct_chauffage_urbain']
 colonnes_revenus = ['median_revenu_disponible','indice_gini','pct_minima_sociaux']
 
+# On remplie les cases vides par la moyenne de la colonne
 for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
+# On complète les cases vide par 0 pour la colonne volume_etudiants_proche, surface_terrain
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
+# Filtrage des lignes pour récupérer seulements les lignes qui ont >= 9 m² et <= 300 m²
 donnees_propres = donnees[
-    (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
+    (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)         # On pourra modifier les valeurs ici 
 ].copy()
 
+# Mask qui permet de return True si c'est un appart
 mask_appart = donnees_propres['type_local'] == 'Appartement'
+
+# Pour chaque ligne qui sont des appartements on met 0 
 donnees_propres.loc[mask_appart, 'surface_terrain'] = 0
 
+# ==========================================
+# FEATURE ENGINEERING : creation des variables derivees
+# ==========================================
+
+# Prix au m2 en logarithme : c'est la CIBLE du modele.
+# Le log corrige l'asymetrie des prix (beaucoup de biens bon marche, quelques-uns tres chers)
+# et rend les erreurs proportionnelles plutot qu'absolues.
 donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
+
+# Surface en logarithme : meme logique, la surface a une distribution asymetrique.
+# Le log capte mieux l'effet "decroissant" de la surface sur le prix au m2.
 donnees_propres['log_surface'] = np.log(donnees_propres['surface_reelle_bati'])
+
+# Surface moyenne par piece : distingue un grand T2 d'un petit T4 a surface egale.
+# Proxy du "standing" / de la configuration du bien.
 donnees_propres['surface_par_piece'] = donnees_propres['surface_reelle_bati'] / donnees_propres['nombre_pieces_principales']
+
+# Indicateur binaire : 1 si le bien a un terrain, 0 sinon.
+# Separe l'existence d'un terrain (a-t-il un jardin ?) de sa taille.
 donnees_propres['a_terrain'] = (donnees_propres['surface_terrain'] > 0).astype(int)
+
+# Terrain en log1p (= log(1 + x)) : gere le log des terrains,
+# y compris ceux a 0 (log1p(0) = 0, alors que log(0) est indefini).
 donnees_propres['log_terrain'] = np.log1p(donnees_propres['surface_terrain'])
+
+# Code section cadastrale : les 10 premiers caracteres de l'id_parcelle.
+# Servira a calculer un prix median par micro-zone (plus fin que la commune).
 donnees_propres['code_section'] = donnees_propres['id_parcelle'].str[:10]
 
+# Recupere automatiquement toutes les colonnes de distance (dist_transport_m, dist_mer_m, etc.)
+# Le prefixe 'dist_' evite de les lister une par une a la main.
 colonnes_dist = [col for col in donnees_propres.columns if col.startswith('dist_')]
-colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche', 'log_surface', 'surface_par_piece',
-                     'surface_terrain', 'log_terrain', 'median_revenu_disponible', 'indice_gini', 'pct_minima_sociaux','potentiel_urbain']
 
+# Features numeriques "standard" : caracteristiques du bien + contexte socio-economique communal
+# (surface, terrain, revenus de la commune, potentiel urbain).
+colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche', 'log_surface', 'surface_par_piece',
+                     'surface_terrain', 'log_terrain', 'median_revenu_disponible', 'indice_gini',
+                     'pct_minima_sociaux', 'potentiel_urbain']
+
+# Liste finale des features de base passees au modele : on assemble
+# les variables geographiques/temporelles + DPE + chauffage + standard + distances.
+# (Les features de voisinage/section seront ajoutees plus tard, apres le split train/test,
+#  pour eviter le data leakage.)
 features_base = ['latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente', 'mois_vente', 'a_terrain'] \
                 + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
 
@@ -558,8 +615,6 @@ for type_bien, df_bien in datasets.items():
     pred_haut_log = modeles_q['haut'].predict(X_test)
 
     prix_reels_euros = np.exp(y_test)
-    
-    # SUPPRESSION DU FACTEUR DE DUAN (Inutile et faux pour des prédictions de médianes/quantiles)
     prix_bas = np.exp(pred_bas_log)
     prix_predits_euros = np.exp(pred_med_log)
     prix_haut = np.exp(pred_haut_log)
