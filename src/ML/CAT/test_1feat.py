@@ -242,6 +242,38 @@ features_base = build_features()
 print(f"\n{len(features_base)} features de base : {features_base}")
 
 # =====================================================================
+# SAISIE DES BORNES DE PRIX (plancher / plafond)
+# =====================================================================
+# On affiche les quantiles 0.01 et 0.99 du prix au m2, par type de bien,
+# pour aider l'utilisateur a choisir des bornes eclairees.
+print("\n" + "=" * 55)
+print("BORNES DE PRIX AU M2 (filtrage des aberrations)")
+print("=" * 55)
+print("Quantiles observes du prix au m2 par type :")
+for tb in ['Maison', 'Appartement']:
+    sous = dp[dp['type_local'] == tb]
+    if len(sous) > 0:
+        q01 = sous['prix_m2'].quantile(0.01)
+        q99 = sous['prix_m2'].quantile(0.99)
+        print(f"  {tb:12s} : q01 = {q01:.0f} EUR/m2  |  q99 = {q99:.0f} EUR/m2  (median {sous['prix_m2'].median():.0f})")
+
+def saisir_borne(question, defaut):
+    rep = input(f"  {question} (Entree = {defaut:.0f}) : ").strip().replace(',', '.')
+    if rep == "":
+        return defaut
+    try:
+        return float(rep)
+    except ValueError:
+        print(f"    Valeur invalide, on garde {defaut:.0f}.")
+        return defaut
+
+# Valeurs par defaut : les memes garde-fous qu'avant (800 et 15000)
+print("\nSaisissez les bornes a appliquer (communes aux deux types) :")
+PLANCHER_PRIX = saisir_borne("Prix plancher (EUR/m2)", 800)
+PLAFOND_PRIX = saisir_borne("Prix plafond (EUR/m2)", 15000)
+print(f"\nBornes retenues : {PLANCHER_PRIX:.0f} - {PLAFOND_PRIX:.0f} EUR/m2")
+
+# =====================================================================
 # ENTRAINEMENT + TEST PAR TYPE
 # =====================================================================
 def entrainer_et_tester(type_bien):
@@ -249,8 +281,10 @@ def entrainer_et_tester(type_bien):
     if len(df_bien) < 100:
         print(f"\n{type_bien} : pas assez de donnees."); return None
 
-    plancher=max(df_bien['prix_m2'].quantile(0.01),800)
-    plafond=min(df_bien['prix_m2'].quantile(0.99),15000)
+    # Bornes : on combine le choix utilisateur avec les quantiles du type
+    # (on ne descend jamais sous q01 ni au-dessus de q99 pour rester coherent)
+    plancher = max(df_bien['prix_m2'].quantile(0.01), PLANCHER_PRIX)
+    plafond = min(df_bien['prix_m2'].quantile(0.99), PLAFOND_PRIX)
     df_bien=df_bien[(df_bien['prix_m2']>=plancher)&(df_bien['prix_m2']<=plafond)].copy()
 
     # Features locales (voisins/section) calculees sur TOUT df_bien (train complet en prod)
@@ -292,7 +326,7 @@ def entrainer_et_tester(type_bien):
     X_tr,X_val,y_tr,y_val = train_test_split(X,y,test_size=0.2,random_state=42)
     modeles={}
     for nom,alpha in {'bas':0.025,'median':0.50,'haut':0.975}.items():
-        m=CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}',iterations=1000,
+        m=CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}',iterations=4000,
                             learning_rate=0.04,depth=8,random_seed=42,
                             early_stopping_rounds=50,verbose=False)
         m.fit(X_tr,y_tr,eval_set=(X_val,y_val),use_best_model=True)
