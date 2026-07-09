@@ -323,11 +323,11 @@ def entrainer_et_tester(type_bien):
     X = df_bien[feats]; y = df_bien['log_prix_m2']
 
     # Entrainement quantile
-    X_tr,X_val,y_tr,y_val = train_test_split(X,y,test_size=0.2,random_state=42)
+    X_tr,X_val,y_tr,y_val = train_test_split(X,y,test_size=0.3,random_state=42)
     modeles={}
     for nom,alpha in {'bas':0.025,'median':0.50,'haut':0.975}.items():
-        m=CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}',iterations=4000,
-                            learning_rate=0.04,depth=8,random_seed=42,
+        m=CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}',iterations=1000,
+                            learning_rate=0.04,depth=8,random_seed=42,l2_leaf_reg=3.0,
                             early_stopping_rounds=50,verbose=False)
         m.fit(X_tr,y_tr,eval_set=(X_val,y_val),use_best_model=True)
         modeles[nom]=m
