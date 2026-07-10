@@ -70,6 +70,7 @@ FA['densite']     = demander("Densite ventes 1km ?", True)
 FA['section']     = demander("Prix par section ?", True)
 print("\n--- Feature experimentale ---")
 FA['potentiel_urbain'] = demander("Potentiel urbain ?", True)
+FA['chomage'] = demander("Taux de chomage departemental ?", True)
 
 # ==========================================
 # 1. CONNEXION + CHOIX DE LA ZONE
@@ -220,12 +221,29 @@ if FA['potentiel_urbain']:
         poles[c] = pd.to_numeric(poles[c], errors='coerce')
     poles = poles.dropna(subset=['latitude', 'longitude', 'poids_aire'])
 
+# Taux de chomage par departement et trimestre (charge si actif)
+chomage = None
+if FA['chomage']:
+    chomage = pd.read_sql(
+        "SELECT code_departement, annee, trimestre, taux_chomage FROM chomage_departements",
+        con=moteur
+    )
+
 # ==========================================
 # 2. FUSION GLOBALE
 # ==========================================
 print("Etape 2 : Fusion...")
 donnees = pd.merge(maisons_apparts, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+
+# Jointure du chomage (departement + trimestre)
+if chomage is not None:
+    donnees['code_departement'] = donnees['code_commune'].str[:2]
+    donnees['trimestre'] = ((donnees['mois_vente'].astype(int) - 1) // 3 + 1)
+    donnees = pd.merge(donnees, chomage,
+                       left_on=['code_departement', 'annee_vente', 'trimestre'],
+                       right_on=['code_departement', 'annee', 'trimestre'], how='left')
+    donnees = donnees.drop(columns=['annee'], errors='ignore')
 
 # ==========================================
 # 3. DISTANCES SPATIALES
@@ -303,6 +321,8 @@ donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 if 'potentiel_urbain' in donnees.columns:
     donnees['potentiel_urbain'] = donnees['potentiel_urbain'].fillna(donnees['potentiel_urbain'].median())
+if 'taux_chomage' in donnees.columns:
+    donnees['taux_chomage'] = donnees['taux_chomage'].fillna(donnees['taux_chomage'].median())
 
 donnees_propres = donnees[
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
@@ -334,6 +354,8 @@ def build_features_base():
     if FA['revenus']:    f += colonnes_revenus
     if FA['potentiel_urbain'] and 'potentiel_urbain' in donnees_propres.columns:
         f += ['potentiel_urbain']
+    if FA['chomage'] and 'taux_chomage' in donnees_propres.columns:
+        f += ['taux_chomage']
     # Distances (selon interrupteurs individuels)
     if FA['dist_transport']:  f += ['dist_transport_m']
     if FA['dist_monument']:   f += ['dist_monument_m']
@@ -426,7 +448,7 @@ for type_bien, df_bien in datasets.items():
 
     # 6. ENTRAINEMENT DES 3 MODELES QUANTILES
     print("  -> Entrainement des modeles quantiles (CatBoost)...")
-    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
     quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
     modeles = {}
@@ -479,6 +501,14 @@ for type_bien, df_bien in datasets.items():
     # Poles urbains : seulement si la feature est active
     if poles is not None and len(poles) > 0:
         contexte['poles_urbains'] = poles[['latitude', 'longitude', 'poids_aire']].values
+
+    # Chomage : on sauvegarde le taux le PLUS RECENT par departement.
+    # En production, on estime un bien "aujourd'hui" -> on utilise le dernier taux connu.
+    if chomage is not None:
+        chomage_recent = (chomage.sort_values(['annee', 'trimestre'])
+                          .groupby('code_departement')['taux_chomage'].last().to_dict())
+        contexte['chomage_par_departement'] = chomage_recent
+        contexte['chomage_median_global'] = float(chomage['taux_chomage'].median())
 
     with open(DOSSIER_MODELE / f"contexte_{type_bien}.pkl", "wb") as f:
         pickle.dump(contexte, f)
