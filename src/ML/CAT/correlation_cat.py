@@ -307,6 +307,12 @@ poles_etrangers = pd.DataFrame([
 ])
 poles = pd.concat([poles, poles_etrangers], ignore_index=True)
 
+# PIB national (annuel) - une valeur par annee, pour toute la France
+pib = pd.read_sql("SELECT annee, pib_national FROM pib_national", con=moteur)
+
+# Taux de chomage par departement et trimestre (varie geographiquement !)
+chomage = pd.read_sql("SELECT code_departement, annee, trimestre, taux_chomage FROM chomage_departements", con=moteur)
+
 # ==========================================
 # 2. FUSION ET DISTANCES GLOBALES
 # ==========================================
@@ -315,6 +321,19 @@ print("Etape 2/4 : Fusion et calculs spatiaux partagés...")
 # Fusion des données qu'on a récupérer sur les maisons, dpe, et les revenus
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+
+# Jointure du PIB par annee (le PIB est national et annuel)
+donnees = pd.merge(donnees, pib, left_on='annee_vente', right_on='annee', how='left')
+donnees = donnees.drop(columns=['annee'], errors='ignore')
+
+donnees['code_departement'] = donnees['code_commune'].str[:2]
+donnees['trimestre'] = (donnees['mois_vente'] - 1) // 3 + 1
+
+# Jointure du chomage par departement + annee + trimestre
+donnees = pd.merge(donnees, chomage,
+                   left_on=['code_departement', 'annee_vente', 'trimestre'],
+                   right_on=['code_departement', 'annee', 'trimestre'], how='left')
+donnees = donnees.drop(columns=['annee'], errors='ignore')
 
 RAYON_TERRE_METRES = 6371000
 points_rad = np.deg2rad(donnees[['latitude', 'longitude']])
@@ -391,6 +410,12 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
+if 'pib_national' in donnees.columns:
+    donnees['pib_national'] = donnees['pib_national'].fillna(donnees['pib_national'].median())
+
+if 'taux_chomage' in donnees.columns:
+    donnees['taux_chomage'] = donnees['taux_chomage'].fillna(donnees['taux_chomage'].median())
+
 # Filtrage des lignes pour récupérer seulements les lignes qui ont >= 9 m² et <= 300 m²
 donnees_propres = donnees[
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)         # On pourra modifier les valeurs ici 
@@ -445,7 +470,7 @@ colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche', 'log_surf
 # les variables geographiques/temporelles + DPE + chauffage + standard + distances.
 # (Les features de voisinage/section seront ajoutees plus tard, apres le split train/test,
 #  pour eviter le data leakage.)
-features_base = ['latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente', 'mois_vente', 'a_terrain'] \
+features_base = ['latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente', 'mois_vente', 'a_terrain','pib_national','taux_chomage'] \
                 + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
 
 # ==========================================
