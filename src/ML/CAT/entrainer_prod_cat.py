@@ -71,6 +71,7 @@ FA['section']     = demander("Prix par section ?", True)
 print("\n--- Feature experimentale ---")
 FA['potentiel_urbain'] = demander("Potentiel urbain ?", True)
 FA['chomage'] = demander("Taux de chomage departemental ?", True)
+FA['pib'] = demander("PIB national ?", False)
 
 # ==========================================
 # 1. CONNEXION + CHOIX DE LA ZONE
@@ -229,6 +230,11 @@ if FA['chomage']:
         con=moteur
     )
 
+# PIB national (annuel) - charge si actif. ATTENTION : redondant avec annee (corr 0.94)
+pib = None
+if FA['pib']:
+    pib = pd.read_sql("SELECT annee, pib_national FROM pib_national", con=moteur)
+
 # ==========================================
 # 2. FUSION GLOBALE
 # ==========================================
@@ -243,6 +249,11 @@ if chomage is not None:
     donnees = pd.merge(donnees, chomage,
                        left_on=['code_departement', 'annee_vente', 'trimestre'],
                        right_on=['code_departement', 'annee', 'trimestre'], how='left')
+    donnees = donnees.drop(columns=['annee'], errors='ignore')
+
+# Jointure du PIB (par annee seule, le PIB est national)
+if pib is not None:
+    donnees = pd.merge(donnees, pib, left_on='annee_vente', right_on='annee', how='left')
     donnees = donnees.drop(columns=['annee'], errors='ignore')
 
 # ==========================================
@@ -323,6 +334,8 @@ if 'potentiel_urbain' in donnees.columns:
     donnees['potentiel_urbain'] = donnees['potentiel_urbain'].fillna(donnees['potentiel_urbain'].median())
 if 'taux_chomage' in donnees.columns:
     donnees['taux_chomage'] = donnees['taux_chomage'].fillna(donnees['taux_chomage'].median())
+if 'pib_national' in donnees.columns:
+    donnees['pib_national'] = donnees['pib_national'].fillna(donnees['pib_national'].median())
 
 donnees_propres = donnees[
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
@@ -356,6 +369,8 @@ def build_features_base():
         f += ['potentiel_urbain']
     if FA['chomage'] and 'taux_chomage' in donnees_propres.columns:
         f += ['taux_chomage']
+    if FA['pib'] and 'pib_national' in donnees_propres.columns:
+        f += ['pib_national']
     # Distances (selon interrupteurs individuels)
     if FA['dist_transport']:  f += ['dist_transport_m']
     if FA['dist_monument']:   f += ['dist_monument_m']
@@ -509,6 +524,11 @@ for type_bien, df_bien in datasets.items():
                           .groupby('code_departement')['taux_chomage'].last().to_dict())
         contexte['chomage_par_departement'] = chomage_recent
         contexte['chomage_median_global'] = float(chomage['taux_chomage'].median())
+
+    # PIB : national, on sauvegarde le dernier PIB connu (une seule valeur pour tous).
+    if pib is not None:
+        pib_recent = pib.sort_values('annee')['pib_national'].iloc[-1]
+        contexte['pib_recent'] = float(pib_recent)
 
     with open(DOSSIER_MODELE / f"contexte_{type_bien}.pkl", "wb") as f:
         pickle.dump(contexte, f)
