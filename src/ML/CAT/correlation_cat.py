@@ -206,8 +206,12 @@ maisons = pd.read_sql(f"""
            surface_terrain, YEAR(date_mutation) AS annee_vente, MONTH(date_mutation) AS mois_vente
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
-      AND nature_mutation = 'Vente' AND nombre_lots <= 3 AND nombre_pieces_principales > 0
-      AND {filtre_dvf} AND type_local IN ('Maison', 'Appartement');
+        AND nature_mutation = 'Vente' AND nombre_lots <= 3 AND nombre_pieces_principales > 0
+        AND {filtre_dvf} AND type_local IN ('Maison', 'Appartement')
+        AND id_mutation IN (
+            SELECT id_mutation FROM valeurs_foncieres
+            WHERE surface_reelle_bati > 0
+            GROUP BY id_mutation HAVING COUNT(*) = 1);
 """, con=moteur)
 maisons = maisons.drop_duplicates(subset=['id_parcelle','prix_m2','surface_reelle_bati'])
 
@@ -238,19 +242,11 @@ dpe = pd.read_sql(f"""
 # Recherche dans la table donnees_transport et récupère toutes les lignes qui ne sont pas NULL 
 stations = pd.read_sql("SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur)
 
-# Recherche des lat,long des monuments historiques, infrastructures_hopitaux, et infrastructures_universités selon l'input de l'utilisateur
-if dep_infra == 'FRANCE':
-    query_monuments = "SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;"
-    query_hopitaux = "SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;"
-    query_universites = "SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL;"
-else:
-    query_monuments = f"SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{dep_infra}';"
-    query_hopitaux = f"SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND LEFT(code_postal, 2) = '{dep_infra}';"
-    query_universites = f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{dep_infra}';"
-
-monuments = pd.read_sql(query_monuments, con=moteur)
-hopitaux = pd.read_sql(query_hopitaux, con=moteur)
-universites = pd.read_sql(query_universites, con=moteur)
+# Chargement NATIONAL des infrastructures (evite l'effet de bordure : un bien
+# en limite de departement doit pouvoir "voir" l'hopital du departement voisin)
+monuments = pd.read_sql("SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;", con=moteur)
+hopitaux = pd.read_sql("SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;", con=moteur)
+universites = pd.read_sql("SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL;", con=moteur)
 
 filtre_rev = "1=1" if dep_infra == 'FRANCE' else (f"code_commune = '{choix_local}'" if choix_local != 'TOUS' and len(choix_local) == 5 else f"LEFT(code_commune,2) = '{dep_infra}'")
 
@@ -410,25 +406,10 @@ colonnes_dpe = ['pct_dpe_A', 'pct_dpe_B', 'pct_dpe_C', 'pct_dpe_D', 'pct_dpe_E',
 colonnes_chauffage = ['pct_chauffage_elec', 'pct_chauffage_gaz', 'pct_chauffage_fioul', 'pct_chauffage_urbain']
 colonnes_revenus = ['median_revenu_disponible','indice_gini','pct_minima_sociaux']
 
-# On remplie les cases vides par la moyenne de la colonne
-for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
-    if col in donnees.columns:
-        donnees[col] = donnees[col].fillna(donnees[col].median())
-
 # On complète les cases vide par 0 pour la colonne volume_etudiants_proche, surface_terrain
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 
-if 'pib_national' in donnees.columns:
-    donnees['pib_national'] = donnees['pib_national'].fillna(donnees['pib_national'].median())
-
-if 'taux_chomage' in donnees.columns:
-    donnees['taux_chomage'] = donnees['taux_chomage'].fillna(donnees['taux_chomage'].median())
-
-for col in ['taux_credit_immo_fixe', 'taux_inflation']:
-    if col in donnees.columns:
-        donnees[col] = donnees[col].fillna(donnees[col].median())
-        
 # Filtrage des lignes pour récupérer seulements les lignes qui ont >= 9 m² et <= 300 m²
 donnees_propres = donnees[
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)         # On pourra modifier les valeurs ici 
@@ -503,8 +484,11 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
-    plancher = max(df_bien['prix_m2'].quantile(0.01),800)
-    plafond = min(df_bien['prix_m2'].quantile(0.99),15000) # On pourra modifié les prix plafond plus tard ou meme faire un "scanf"
+    # plancher = max(df_bien['prix_m2'].quantile(0.01),800)
+    # plafond = min(df_bien['prix_m2'].quantile(0.99),15000) # On pourra modifié les prix plafond plus tard ou meme faire un "scanf"
+
+    plancher = df_bien['prix_m2'].quantile(0.01)
+    plafond  = df_bien['prix_m2'].quantile(0.99)
 
     df_bien = df_bien[
         (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)
@@ -539,47 +523,45 @@ for type_bien, df_bien in datasets.items():
     
 
     coords_train = np.deg2rad(df_bien.loc[X_train.index, ['latitude', 'longitude']])
-    prix_train = df_bien.loc[X_train.index, 'prix_m2'].values
     arbre_voisins = BallTree(coords_train, metric='haversine')
 
-    # --- prix_m2_voisins : pondéré par distance ET filtré par surface comparable ---
-    # On récupère la surface des biens du train (alignée sur coords_train)
+    # ---- Indice de marche (train uniquement) : actualisation des prix ----
+    annees_train_serie = df_bien.loc[X_train.index, 'annee_vente']
+    idx_marche = df_bien.loc[X_train.index].groupby('annee_vente')['prix_m2'].median()
+    ref_marche = idx_marche.loc[idx_marche.index.max()]
+    coef_marche = (ref_marche / idx_marche).to_dict()
+
+    prix_train = df_bien.loc[X_train.index, 'prix_m2'].values
+    prix_train_actu = prix_train * annees_train_serie.map(coef_marche).values
     surface_train = df_bien.loc[X_train.index, 'surface_reelle_bati'].values
 
-    def voisins_surface_ponderes(distances, indices, surface_bien, exclure_premier=False):
-        """
-        Parmi les voisins géographiques, ne garde que ceux de surface comparable
-        (±40 %), puis fait une moyenne pondérée par la distance.
-        Repli sur tous les voisins si aucun de surface comparable.
-        """
-        if exclure_premier:
-            distances = distances[1:]
-            indices = indices[1:]
+    def voisins_surface_ponderes(distances_rad, indices, surface_bien, idx_self=None):
+        # Exclusion du bien lui-meme par identite d'indice (et non "le premier")
+        if idx_self is not None:
+            garder = indices != idx_self
+            distances_rad, indices = distances_rad[garder], indices[garder]
         if len(indices) == 0:
             return np.nan
 
-        prix_v = prix_train[indices]
+        dist_m = distances_rad * RAYON_TERRE_METRES   # radians -> metres
+        prix_v = prix_train_actu[indices]
         surf_v = surface_train[indices]
 
-        # Masque : voisins dont la surface est dans ±40 % de celle du bien
         borne_bas, borne_haut = surface_bien * 0.6, surface_bien * 1.4
         masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
 
-        if masque.sum() >= 3:   # assez de voisins comparables → on les utilise
-            d, p = distances[masque], prix_v[masque]
-        else:                    # repli : pas assez de comparables → tous les voisins
-            d, p = distances, prix_v
-
-        poids = 1.0 / (d + 1e-9)
+        if masque.sum() >= 3:
+            d, p = dist_m[masque], prix_v[masque]
+        else:
+            d, p = dist_m, prix_v
+        poids = 1.0 / (d + 50.0)   # plancher 50 m : un voisin a 0 m n'ecrase plus tout
         return np.sum(poids * p) / np.sum(poids)
 
-    # On cherche PLUS de voisins (40) car le filtre surface va en retirer
     k_train = min(41, len(coords_train))
     dist_tr, idx_tr = arbre_voisins.query(coords_train, k=k_train)
     surface_bien_train = X_train['surface_reelle_bati'].values
-
     voisins_train = [
-        voisins_surface_ponderes(dist_tr[i], idx_tr[i], surface_bien_train[i], exclure_premier=True)
+        voisins_surface_ponderes(dist_tr[i], idx_tr[i], surface_bien_train[i], idx_self=i)
         for i in range(len(idx_tr))
     ]
 
@@ -587,9 +569,8 @@ for type_bien, df_bien in datasets.items():
     coords_test = np.deg2rad(df_bien.loc[X_test.index, ['latitude', 'longitude']])
     dist_te, idx_te = arbre_voisins.query(coords_test, k=k_test)
     surface_bien_test = X_test['surface_reelle_bati'].values
-
     voisins_test = [
-        voisins_surface_ponderes(dist_te[i], idx_te[i], surface_bien_test[i], exclure_premier=False)
+        voisins_surface_ponderes(dist_te[i], idx_te[i], surface_bien_test[i])
         for i in range(len(idx_te))
     ]
 
@@ -600,24 +581,34 @@ for type_bien, df_bien in datasets.items():
     X_train['prix_m2_voisins'] = voisins_train
     X_test['prix_m2_voisins'] = voisins_test
 
-    df_tr = df_bien.loc[X_train.index]
-    med_section = df_tr.groupby('code_section')['prix_m2'].median()
-    med_commune = df_tr.groupby('code_commune')['prix_m2'].median()
-    med_globale = df_tr['prix_m2'].median()
+    df_tr = df_bien.loc[X_train.index].copy()
+    df_tr['prix_m2_actu'] = df_tr['prix_m2'].values * df_tr['annee_vente'].map(coef_marche).values
 
-    def prix_section_local(idx):
-        sec = df_bien.loc[idx, 'code_section']
-        com = df_bien.loc[idx, 'code_commune']
-        if sec in med_section.index: return med_section[sec]
-        elif com in med_commune.index: return med_commune[com]
-        else: return med_globale
+    med_commune = df_tr.groupby('code_commune')['prix_m2_actu'].median()
+    med_globale = df_tr['prix_m2_actu'].median()
 
-    X_train['prix_m2_section'] = [prix_section_local(i) for i in X_train.index]
-    X_test['prix_m2_section'] = [prix_section_local(i) for i in X_test.index]
+    # --- TRAIN : encodage out-of-fold (une ligne ne voit jamais son propre prix) ---
+    vals_train = pd.Series(np.nan, index=X_train.index)
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    for pos_fit, pos_oof in kf.split(df_tr):
+        med_s = df_tr.iloc[pos_fit].groupby('code_section')['prix_m2_actu'].median()
+        med_c = df_tr.iloc[pos_fit].groupby('code_commune')['prix_m2_actu'].median()
+        sous = df_tr.iloc[pos_oof]
+        v = sous['code_section'].map(med_s)
+        v = v.fillna(sous['code_commune'].map(med_c))
+        v = v.fillna(df_tr.iloc[pos_fit]['prix_m2_actu'].median())
+        vals_train.iloc[pos_oof] = v.values
+    X_train['prix_m2_section'] = vals_train.values
+
+    # --- TEST : medianes sur tout le train, version vectorisee ---
+    med_section = df_tr.groupby('code_section')['prix_m2_actu'].median()
+    sec_te = df_bien.loc[X_test.index, 'code_section'].map(med_section)
+    com_te = df_bien.loc[X_test.index, 'code_commune'].map(med_commune)
+    X_test['prix_m2_section'] = sec_te.fillna(com_te).fillna(med_globale).values
 
     nb_ventes_section = df_tr.groupby('code_section').size()
-    X_train['nb_ventes_section'] = [nb_ventes_section.get(df_bien.loc[i, 'code_section'], 0) for i in X_train.index]
-    X_test['nb_ventes_section'] = [nb_ventes_section.get(df_bien.loc[i, 'code_section'], 0) for i in X_test.index]
+    X_train['nb_ventes_section'] = df_bien.loc[X_train.index, 'code_section'].map(nb_ventes_section).fillna(0).values
+    X_test['nb_ventes_section'] = df_bien.loc[X_test.index, 'code_section'].map(nb_ventes_section).fillna(0).values
 
     features_finales = features_base + ['densite_ventes_1km', 'prix_m2_voisins', 'prix_m2_section', 'nb_ventes_section']
     X_train = X_train[features_finales]
@@ -626,7 +617,13 @@ for type_bien, df_bien in datasets.items():
     # ==========================================
     # MODELE CATBOOST
     # ==========================================
-    X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
+    mask_val = (annees_train_serie == annees_train_serie.max()).values
+    if mask_val.sum() < 50 or (~mask_val).sum() < 200:
+        # repli si trop peu de donnees pour un split temporel
+        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
+    else:
+        X_tr, y_tr = X_train[~mask_val], y_train[~mask_val]
+        X_val, y_val = X_train[mask_val], y_train[mask_val]
     """
     meilleurs = tuner_hyperparametres(X_train,y_train,n_essais=100) #remettre si on veut utiliser Optuna pour donner les hyperparametres les plus optimisé
     """
@@ -659,8 +656,7 @@ for type_bien, df_bien in datasets.items():
     prix_predits_euros = np.exp(pred_med_log)
     prix_haut = np.exp(pred_haut_log)
 
-    prix_bas = np.minimum(prix_bas,prix_haut)
-    prix_haut = np.maximum(prix_bas,prix_haut)
+    prix_bas, prix_haut = np.minimum(prix_bas, prix_haut), np.maximum(prix_bas, prix_haut)
 
     mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
     mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros) / prix_reels_euros)) * 100
@@ -787,7 +783,7 @@ for type_bien, df_bien in datasets.items():
     print(f"RMSE            : {rmse:.0f} EUR/m2")
     print(f"Dans les +/- 10%: {np.mean(erreur_rel <= 0.10) * 100:.1f} %")
     print(f"Dans les +/- 20%: {np.mean(erreur_rel <= 0.20) * 100:.1f} %")
-    print(f"Couverture intervalle 90% : {couverture:.1f} %")
+    print(f"Couverture intervalle 95% : {couverture:.1f} %")
     print(f"Largeur moyenne intervalle : {largeur_moyenne:.0f} EUR/m2")
 
 print("\n" + "=" * 50)

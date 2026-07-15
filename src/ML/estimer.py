@@ -175,27 +175,25 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
         if v is None or (isinstance(v, float) and np.isnan(v)):
             return med_glob.get(col, 0.0)
         return v
-
-    # prix_m2_voisins (version B : pondere par distance + surface comparable)
+    # prix_m2_voisins — MEME formule que l'entrainement (metres, plancher 50 m, filtre surface)
     surface_all = CTX.get('surface_all')
     k = min(40, len(prix_all))
     dist_v, idx = arbre_v.query(point_rad, k=k)
-    dist_v = dist_v[0]
+    dist_m = dist_v[0] * RAYON_TERRE   # radians -> metres
     idx = idx[0]
+    prix_v = prix_all[idx]
     if surface_all is not None:
-        prix_v = prix_all[idx]
         surf_v = surface_all[idx]
         borne_bas, borne_haut = surface * 0.6, surface * 1.4
         masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
         if masque.sum() >= 3:
-            d, p = dist_v[masque], prix_v[masque]
+            d, p = dist_m[masque], prix_v[masque]
         else:
-            d, p = dist_v, prix_v
-        poids = 1.0 / (d + 1e-9)
-        prix_voisins = float(np.sum(poids * p) / np.sum(poids))
+            d, p = dist_m, prix_v
     else:
-        poids = 1.0 / (dist_v + 1e-9)
-        prix_voisins = float(np.sum(poids * prix_all[idx]) / np.sum(poids))
+        d, p = dist_m, prix_v
+    poids = 1.0 / (d + 50.0)
+    prix_voisins = float(np.sum(poids * p) / np.sum(poids))
 
     # potentiel_urbain (influence ponderee des poles)
     if arbre_poles is not None:
@@ -222,8 +220,8 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
     # nb_ventes_section
     if code_section is not None and code_section in CTX['nb_ventes_section']:
         nb_ventes_sec = CTX['nb_ventes_section'][code_section]
-    else: 
-        nb_ventes_sec = densite
+    else:
+        nb_ventes_sec = 0
 
     # Volume etudiants
     if arbre_universites is not None:
@@ -277,7 +275,7 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
 
     manquantes = [f for f in FEATURES if f not in valeurs]
     if manquantes:
-        raise ValueError(f"Features manquantes pour le modele XGBoost : {manquantes}")
+        raise ValueError(f"Features manquantes pour le modele Catboost : {manquantes}")
 
     return pd.DataFrame([[valeurs[f] for f in FEATURES]], columns=FEATURES)
 
@@ -290,9 +288,10 @@ def estimer(adresse, surface, type_bien, nb_pieces,
     
     if type_bien not in ['maisons', 'appartements']:
         return {'erreur': "Le type de bien doit etre 'maisons' ou 'appartements'."}
-        
+    
     if type_bien not in modeles or 'median' not in modeles[type_bien]:
         return {'erreur': f"Le modele pour les {type_bien} n'est pas entraine."}
+    annee = contextes[type_bien].get('annee_reference', annee)
     # Resolution de l'adresse si non fournie
     if geo_resolu is None:
         geo = geocoder(adresse)
@@ -370,10 +369,10 @@ if __name__ == "__main__":
     else:
         print(f"Bien ({res['type_retenu']}) : {res['adresse']}")
         print(f"Prix au m2 estime : {res['prix_m2_estime']} EUR/m2")
-        print(f"  Fourchette 90%  : {res['prix_m2_fourchette'][0]} - {res['prix_m2_fourchette'][1]} EUR/m2")
+        print(f"  Fourchette 95%  : {res['prix_m2_fourchette'][0]} - {res['prix_m2_fourchette'][1]} EUR/m2")
         print("-" * 50)
         print(f"Prix total estime : {res['prix_total_estime']} EUR")
-        print(f"  Fourchette 90%  : {res['prix_total_fourchette'][0]} - {res['prix_total_fourchette'][1]} EUR")
+        print(f"  Fourchette 95%  : {res['prix_total_fourchette'][0]} - {res['prix_total_fourchette'][1]} EUR")
         print(f"Prix supérieur 20% : {res['prix_total_estime'] * 1.20:.2f} EUR")
         print(f"Prix inférieur 20% : {res['prix_total_estime'] * 0.80:.2f} EUR")
     print("=" * 50)

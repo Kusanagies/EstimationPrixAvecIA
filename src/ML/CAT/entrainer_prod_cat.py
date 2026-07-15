@@ -23,11 +23,12 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from sklearn.neighbors import BallTree
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from catboost import CatBoostRegressor
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import geopandas as gpd
+
 
 # ==========================================
 # 0. CHOIX DES FEATURES (interactif)
@@ -134,7 +135,11 @@ maisons_apparts = pd.read_sql(f"""
       AND nombre_lots <= 3
       AND nombre_pieces_principales > 0
       AND {filtre_dvf}
-      AND type_local IN ('Maison', 'Appartement');
+      AND type_local IN ('Maison', 'Appartement')
+      AND id_mutation IN (
+          SELECT id_mutation FROM valeurs_foncieres
+          WHERE surface_reelle_bati > 0
+          GROUP BY id_mutation HAVING COUNT(*) = 1);
 """, con=moteur)
 
 maisons_apparts = maisons_apparts.drop_duplicates(
@@ -166,18 +171,9 @@ dpe = pd.read_sql(f"""
 
 stations = pd.read_sql("SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur)
 
-if dep_infra == 'FRANCE':
-    q_mon = "SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;"
-    q_hop = "SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;"
-    q_uni = "SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL;"
-else:
-    q_mon = f"SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{dep_infra}';"
-    q_hop = f"SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND LEFT(code_postal, 2) = '{dep_infra}';"
-    q_uni = f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{dep_infra}';"
-
-monuments = pd.read_sql(q_mon, con=moteur)
-hopitaux = pd.read_sql(q_hop, con=moteur)
-universites = pd.read_sql(q_uni, con=moteur)
+monuments = pd.read_sql("SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL;", con=moteur)
+hopitaux = pd.read_sql("SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL;", con=moteur)
+universites = pd.read_sql("SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL;", con=moteur)
 
 revenus = pd.read_sql(f"""
     SELECT code_commune, median_revenu_disponible, indice_gini, pct_minima_sociaux
@@ -285,6 +281,7 @@ if len(universites) > 0:
 else:
     donnees['dist_universite_m'] = 999999
     donnees['volume_etudiants_proche'] = 0
+
 
 def extraire_points_contour(sous_gdf):
     points = []
@@ -397,8 +394,12 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
-    plancher = max(df_bien['prix_m2'].quantile(0.01), 800)
-    plafond = min(df_bien['prix_m2'].quantile(0.99), 15000)
+    # plancher = max(df_bien['prix_m2'].quantile(0.01), 800)
+    # plafond = min(df_bien['prix_m2'].quantile(0.99), 15000)
+
+    plancher = df_bien['prix_m2'].quantile(0.01)
+    plafond = df_bien['prix_m2'].quantile(0.99)
+
     df_bien = df_bien[
         (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)
     ].copy()
@@ -415,30 +416,43 @@ for type_bien, df_bien in datasets.items():
     surface_all = df_bien['surface_reelle_bati'].values
     arbre_voisins = BallTree(coords_all, metric='haversine')
 
+# ---- Indice de marche : actualisation des prix vers l'annee la plus recente ----
+    idx_marche = df_bien.groupby('annee_vente')['prix_m2'].median()
+    ref_marche = idx_marche.loc[idx_marche.index.max()]
+    coef_marche = (ref_marche / idx_marche).to_dict()
+    prix_all_actu = prix_all * df_bien['annee_vente'].map(coef_marche).values
+    
     features_finales = list(features_base)
 
     # --- Features spatiales locales (selon interrupteurs) ---
     if FA['voisins']:
-        def voisins_surface_ponderes(distances, indices, surface_bien):
-            distances = distances[1:]; indices = indices[1:]
+        def voisins_surface_ponderes(distances_rad, indices, surface_bien, idx_self=None):
+            # Exclusion du bien lui-meme par identite d'indice (et non "le premier")
+            if idx_self is not None:
+                garder = indices != idx_self
+                distances_rad, indices = distances_rad[garder], indices[garder]
             if len(indices) == 0:
                 return np.nan
-            prix_v = prix_all[indices]; surf_v = surface_all[indices]
+            dist_m = distances_rad * RAYON_TERRE_METRES   # radians -> metres
+            prix_v = prix_all_actu[indices]; surf_v = surface_all[indices]
             borne_bas, borne_haut = surface_bien * 0.6, surface_bien * 1.4
             masque = (surf_v >= borne_bas) & (surf_v <= borne_haut)
             if masque.sum() >= 3:
-                d, p = distances[masque], prix_v[masque]
+                d, p = dist_m[masque], prix_v[masque]
             else:
-                d, p = distances, prix_v
-            poids = 1.0 / (d + 1e-9)
+                d, p = dist_m, prix_v
+            poids = 1.0 / (d + 50.0)   # plancher 50 m
             return np.sum(poids * p) / np.sum(poids)
+
         k_voisins = min(41, len(coords_all))
         dist_v, idx_v = arbre_voisins.query(coords_all, k=k_voisins)
         if k_voisins > 1:
-            X['prix_m2_voisins'] = [voisins_surface_ponderes(dist_v[i], idx_v[i], surface_all[i]) for i in range(len(idx_v))]
+            X['prix_m2_voisins'] = [voisins_surface_ponderes(dist_v[i], idx_v[i], surface_all[i], idx_self=i)
+                                    for i in range(len(idx_v))]
         else:
-            X['prix_m2_voisins'] = prix_all
+            X['prix_m2_voisins'] = np.nan
         features_finales += ['prix_m2_voisins']
+        
 
     if FA['densite']:
         rayon_rad = 1000 / RAYON_TERRE_METRES
@@ -446,24 +460,46 @@ for type_bien, df_bien in datasets.items():
         features_finales += ['densite_ventes_1km']
 
     med_section = med_commune = None
-    med_globale = float(df_bien['prix_m2'].median())
+    med_globale = float(np.median(prix_all_actu))
     nb_ventes_section = None
+
     if FA['section']:
-        med_section = df_bien.groupby('code_section')['prix_m2'].median()
-        med_commune = df_bien.groupby('code_commune')['prix_m2'].median()
-        sec = df_bien['code_section']; com = df_bien['code_commune']
-        prix_sec = sec.map(med_section).fillna(com.map(med_commune)).fillna(med_globale)
-        X['prix_m2_section'] = prix_sec.values
+        df_sec = df_bien.copy()
+        df_sec['prix_m2_actu'] = prix_all_actu
+
+        # Medianes COMPLETES (prix actualises) : pour le contexte / estimer.py
+        med_section = df_sec.groupby('code_section')['prix_m2_actu'].median()
+        med_commune = df_sec.groupby('code_commune')['prix_m2_actu'].median()
+
+        # ENTRAINEMENT : out-of-fold (une ligne ne voit jamais son propre prix)
+        vals = pd.Series(np.nan, index=df_sec.index)
+        kf_enc = KFold(n_splits=5, shuffle=True, random_state=42)
+        for pos_fit, pos_oof in kf_enc.split(df_sec):
+            med_s = df_sec.iloc[pos_fit].groupby('code_section')['prix_m2_actu'].median()
+            med_c = df_sec.iloc[pos_fit].groupby('code_commune')['prix_m2_actu'].median()
+            sous = df_sec.iloc[pos_oof]
+            v = sous['code_section'].map(med_s)
+            v = v.fillna(sous['code_commune'].map(med_c))
+            v = v.fillna(df_sec.iloc[pos_fit]['prix_m2_actu'].median())
+            vals.iloc[pos_oof] = v.values
+        X['prix_m2_section'] = vals.values
+
         nb_ventes_section = df_bien.groupby('code_section').size()
         X['nb_ventes_section'] = df_bien['code_section'].map(nb_ventes_section).fillna(0).values
         features_finales += ['prix_m2_section', 'nb_ventes_section']
-
     features_finales = list(dict.fromkeys(features_finales))
     X = X[features_finales]
 
     # 6. ENTRAINEMENT DES 3 MODELES QUANTILES
     print("  -> Entrainement des modeles quantiles (CatBoost)...")
-    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    annees_serie = df_bien['annee_vente']
+    mask_val = (annees_serie == annees_serie.max()).values
+    if mask_val.sum() < 50 or (~mask_val).sum() < 200:
+        X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    else:
+        X_tr, y_tr = X[~mask_val], y[~mask_val]
+        X_val, y_val = X[mask_val], y[mask_val]
 
     quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
     modeles = {}
@@ -493,7 +529,7 @@ for type_bien, df_bien in datasets.items():
     contexte = {
         'features_actives': FA,  # NEW : la config des interrupteurs, pour estimer.py
         'arbre_voisins_data': coords_all.values,
-        'prix_all': prix_all,
+        'prix_all': prix_all_actu,
         'surface_all': surface_all,
         'med_section': med_section.to_dict() if med_section is not None else {},
         'med_commune': med_commune.to_dict() if med_commune is not None else {},
@@ -511,7 +547,9 @@ for type_bien, df_bien in datasets.items():
         'rayon_terre': RAYON_TERRE_METRES,
         'points_mer': extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Mer']),
         'points_lac': extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Lac']),
-        'points_estuaire': extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Estuaire'])
+        'points_estuaire': extraire_points_contour(gdf_littoral[gdf_littoral['CLASSEMENT'] == 'Estuaire']),
+        'annee_reference': int(df_bien['annee_vente'].max()),
+        
     }
     # Poles urbains : seulement si la feature est active
     if poles is not None and len(poles) > 0:
