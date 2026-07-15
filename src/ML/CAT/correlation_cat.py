@@ -313,6 +313,9 @@ pib = pd.read_sql("SELECT annee, pib_national FROM pib_national", con=moteur)
 # Taux de chomage par departement et trimestre (varie geographiquement !)
 chomage = pd.read_sql("SELECT code_departement, annee, trimestre, taux_chomage FROM chomage_departements", con=moteur)
 
+# Taux macro (mensuel, national)
+taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FROM taux_macro", con=moteur)
+
 # ==========================================
 # 2. FUSION ET DISTANCES GLOBALES
 # ==========================================
@@ -334,6 +337,12 @@ donnees = pd.merge(donnees, chomage,
                    left_on=['code_departement', 'annee_vente', 'trimestre'],
                    right_on=['code_departement', 'annee', 'trimestre'], how='left')
 donnees = donnees.drop(columns=['annee'], errors='ignore')
+
+# Jointure des taux par annee + mois
+donnees = pd.merge(donnees, taux,
+                   left_on=['annee_vente', 'mois_vente'],
+                   right_on=['annee', 'mois'], how='left')
+donnees = donnees.drop(columns=['annee', 'mois'], errors='ignore')
 
 RAYON_TERRE_METRES = 6371000
 points_rad = np.deg2rad(donnees[['latitude', 'longitude']])
@@ -416,6 +425,10 @@ if 'pib_national' in donnees.columns:
 if 'taux_chomage' in donnees.columns:
     donnees['taux_chomage'] = donnees['taux_chomage'].fillna(donnees['taux_chomage'].median())
 
+for col in ['taux_credit_immo_fixe', 'taux_inflation']:
+    if col in donnees.columns:
+        donnees[col] = donnees[col].fillna(donnees[col].median())
+        
 # Filtrage des lignes pour récupérer seulements les lignes qui ont >= 9 m² et <= 300 m²
 donnees_propres = donnees[
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)         # On pourra modifier les valeurs ici 
@@ -470,7 +483,9 @@ colonnes_standard = ['surface_reelle_bati', 'volume_etudiants_proche', 'log_surf
 # les variables geographiques/temporelles + DPE + chauffage + standard + distances.
 # (Les features de voisinage/section seront ajoutees plus tard, apres le split train/test,
 #  pour eviter le data leakage.)
-features_base = ['latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente', 'mois_vente', 'a_terrain','pib_national','taux_chomage'] \
+features_base = ['latitude', 'longitude', 'nombre_pieces_principales', 'annee_vente',
+                 'mois_vente', 'a_terrain', 'pib_national', 'taux_chomage',
+                 'taux_credit_immo_fixe', 'taux_inflation'] \
                 + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
 
 # ==========================================
