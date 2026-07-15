@@ -64,16 +64,16 @@ dpe = pd.read_sql(f"""
 stations = pd.read_sql("SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur)
 
 # 4. MONUMENTS HISTORIQUES
-monuments = pd.read_sql(f"SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
+monuments = pd.read_sql(f"SELECT latitude, longitude FROM monuments_historiques WHERE latitude IS NOT NULL AND code_departement = '{departement}';", con=moteur)
 
 # 5. HOPITAUX
-hopitaux = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND LEFT(code_postal, 2) = '{departement}';", con=moteur)
+hopitaux = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_hopitaux WHERE latitude IS NOT NULL AND code_departement = '{departement}';", con=moteur)
 
 # 6. UNIVERSITES
-universites = pd.read_sql(f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
+universites = pd.read_sql(f"SELECT latitude, longitude, nombre_etudiants FROM infrastructures_universites WHERE latitude IS NOT NULL AND code_departement = '{departement}';", con=moteur)
 
 # 6bis. MAIRIES (proxy centre-ville)
-mairies = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_mairies WHERE latitude IS NOT NULL AND LEFT(code_insee, 2) = '{departement}';", con=moteur)
+mairies = pd.read_sql(f"SELECT latitude, longitude FROM infrastructures_mairies WHERE latitude IS NOT NULL AND  code_departement = '{departement}';", con=moteur)
 
 # 7. REVENUS INSEE (Filosofi) par commune
 revenus = pd.read_sql(f"""SELECT code_commune,median_revenu_disponible,indice_gini,pct_minima_sociaux 
