@@ -157,7 +157,7 @@ def _distance_min(arbre, point_rad):
 # CONSTRUCTION DU VECTEUR DE FEATURES
 # ==========================================
 def construire_features(lat, lon, code_insee, surface, type_bien,
-                        nb_pieces, surface_terrain, annee, mois):
+                        nb_pieces, surface_terrain, annee, mois,code_section=None):
     """Reconstruit toutes les features d'un bien en ciblant le bon contexte."""
     point_rad = np.deg2rad([[lat, lon]])
     
@@ -209,7 +209,9 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
     densite = int(arbre_v.query_radius(point_rad, r=rayon_rad, count_only=True)[0])
 
     # prix_m2_section
-    code_section = recuperer_section(lat, lon)
+    if code_section is None : 
+        code_section = recuperer_section(lat,lon)
+
     if code_section is not None and code_section in CTX['med_section']:
         prix_section = CTX['med_section'][code_section]
     elif code_insee in CTX['med_commune']:
@@ -273,6 +275,17 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
         'dist_estuaire_m':_distance_min(arbre_estuaire,point_rad),
     }
 
+    # Chomage departemental : dernier taux connu, sauvegarde par l'entrainement
+    if 'chomage_par_departement' in CTX:
+        code_dep = str(code_insee)[:2]
+        valeurs['taux_chomage'] = float(
+            CTX['chomage_par_departement'].get(code_dep, CTX['chomage_median_global'])
+        )
+
+    # PIB national : dernier PIB connu (si la feature etait active a l'entrainement)
+    if 'pib_recent' in CTX:
+        valeurs['pib_national'] = float(CTX['pib_recent'])
+
     manquantes = [f for f in FEATURES if f not in valeurs]
     if manquantes:
         raise ValueError(f"Features manquantes pour le modele Catboost : {manquantes}")
@@ -284,7 +297,7 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
 # FONCTION D'ESTIMATION PRINCIPALE
 # ==========================================
 def estimer(adresse, surface, type_bien, nb_pieces,
-            surface_terrain=0, annee=2025, mois=6, geo_resolu=None):
+            surface_terrain=0, annee=2025, mois=6, geo_resolu=None,code_section=None):
     
     if type_bien not in ['maisons', 'appartements']:
         return {'erreur': "Le type de bien doit etre 'maisons' ou 'appartements'."}
@@ -304,7 +317,8 @@ def estimer(adresse, surface, type_bien, nb_pieces,
     # Construction des features
     X_bien = construire_features(
         geo_resolu['lat'], geo_resolu['lon'], geo_resolu['code_insee'],
-        surface, type_bien, nb_pieces, surface_terrain, annee, mois
+        surface, type_bien, nb_pieces, surface_terrain, annee, mois,
+        code_section=code_section
     )
 
     # Prediction sur le bon jeu de modeles

@@ -81,10 +81,12 @@ print("\n" + "-" * 50)
 RACINE_PROJET = Path(__file__).resolve().parents[3]
 load_dotenv(RACINE_PROJET / ".env")
 CHEMIN_GPKG = "/home/sylvain-huang/Documents/EstimationIA/data/TableGeo2022.gpkg"
-gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 
+gdf_littoral = gpd.read_file(CHEMIN_GPKG)
 if gdf_littoral.crs is not None and gdf_littoral.crs.to_epsg() != 4326:
     gdf_littoral = gdf_littoral.to_crs(epsg=4326)
+
+gdf_littoral['geometry'] = gdf_littoral.geometry.simplify(0.001)  # ~100 m
 
 DOSSIER_MODELE = RACINE_PROJET / "modele_production"
 DOSSIER_MODELE.mkdir(exist_ok=True)
@@ -394,11 +396,23 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
-    # plancher = max(df_bien['prix_m2'].quantile(0.01), 800)
-    # plafond = min(df_bien['prix_m2'].quantile(0.99), 15000)
+    plancher = max(df_bien['prix_m2'].quantile(0.01), 800)
+    plafond = min(df_bien['prix_m2'].quantile(0.99), 15000)
 
-    plancher = df_bien['prix_m2'].quantile(0.01)
-    plafond = df_bien['prix_m2'].quantile(0.99)
+    # plancher = df_bien['prix_m2'].quantile(0.01)
+    # plafond = df_bien['prix_m2'].quantile(0.99)
+
+    # --- Filtre de coherence marche : prix plausible vs la commune ---
+    # Elimine les transactions hors marche (ventes familiales, parts indivises,
+    # nue-propriete) que les quantiles departementaux laissent passer.
+    stats_com = df_bien.groupby('code_commune')['prix_m2'].agg(['median', 'size'])
+    ref_com = df_bien['code_commune'].map(stats_com['median'])
+    n_com = df_bien['code_commune'].map(stats_com['size'])
+    ref_com = ref_com.where(n_com >= 10, df_bien['prix_m2'].median())  # repli si commune trop petite
+    ratio = df_bien['prix_m2'] / ref_com
+    nb_avant = len(df_bien)
+    df_bien = df_bien[ratio.between(0.40, 2.50)].copy()
+    print(f"  Filtre coherence marche : {nb_avant - len(df_bien)} biens retires ({(nb_avant - len(df_bien)) / nb_avant * 100:.1f} %)")
 
     df_bien = df_bien[
         (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)

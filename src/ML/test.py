@@ -4,11 +4,16 @@ TEST D'INTEGRATION DE estimer.py
 Tire des biens reels depuis la base (avec leur vrai prix connu), les passe
 dans estimer(), et compare l'estimation au prix reel.
 
-Applique le meme nombre de tests aux maisons et aux appartements.
-Affiche chaque test (prix reel/estime total + fourchette) et le decompte
-des tests dans la marge de 20% vs au-dela.
+Le tirage applique les MEMES filtres que l'entrainement :
+  - mutations mono-local (id_mutation avec un seul local bati)
+  - surface entre 9 et 300 m2
+  - prix/m2 entre les quantiles 1% et 99% du departement (par type)
 
-Lancer : python3 test_estimations.py
+ATTENTION : les biens tires font partie des donnees d'ENTRAINEMENT du modele
+de production (qui apprend sur tout). Les resultats sont donc optimistes.
+Pour des metriques honnetes, se referer au script d'evaluation (split temporel).
+
+Lancer : python3 test.py
 """
 
 import os
@@ -47,23 +52,113 @@ MARGE = 0.20  # marge d'erreur de reference (20%)
 # TIRAGE DES BIENS REELS
 # ==========================================
 def tirer_biens(type_local, n):
-    """Tire n biens reels aleatoires du departement, avec leur vrai prix."""
-    requete = f"""
-        SELECT id, code_commune, latitude, longitude,
+    """Tire n biens reels aleatoires du departement, avec leur vrai prix.
+    Applique les memes filtres que l'entrainement :
+    mono-local, surface 9-300 m2, puis quantiles 1%/99% du prix/m2."""
+    biens = pd.read_sql(f"""
+        SELECT id, id_parcelle,code_commune, latitude, longitude,
                valeur_fonciere,
                (valeur_fonciere / surface_reelle_bati) AS prix_m2_reel,
                surface_reelle_bati, nombre_pieces_principales, surface_terrain
         FROM valeurs_foncieres
-        WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
+        WHERE latitude IS NOT NULL
+          AND surface_reelle_bati > 9 AND surface_reelle_bati <= 300
           AND nature_mutation = 'Vente' AND nombre_lots <= 3
           AND nombre_pieces_principales > 0
           AND code_departement = '{departement}'
           AND type_local = '{type_local}'
-          AND (valeur_fonciere / surface_reelle_bati) BETWEEN 800 AND 15000
-        ORDER BY RAND()
-        LIMIT {n};
-    """
-    return pd.read_sql(requete, con=moteur)
+          AND id_mutation IN (
+              SELECT id_mutation FROM valeurs_foncieres
+              WHERE surface_reelle_bati > 0
+              GROUP BY id_mutation HAVING COUNT(*) = 1);
+    """, con=moteur)
+
+    if len(biens) == 0:
+        return biens
+
+    # Quantiles purs (comme l'entrainement). Calcules sur le departement :
+    # si le modele a ete entraine sur la France entiere, les bornes peuvent
+    # differer legerement de celles de l'entrainement, sans consequence.
+    plancher = biens['prix_m2_reel'].quantile(0.01)
+    plafond = biens['prix_m2_reel'].quantile(0.99)
+    biens = biens[(biens['prix_m2_reel'] >= plancher) & (biens['prix_m2_reel'] <= plafond)]
+
+    return biens.sample(n=min(n, len(biens))).reset_index(drop=True)
+
+
+# ==========================================
+# VENTILATION DES HORS-MARGE
+# ==========================================
+def ventiler_hors_marge(df, type_local):
+    hors = df[~df['dans_marge']]
+    if len(hors) == 0:
+        print("  Aucun bien hors marge, rien a ventiler.")
+        return
+
+    print("\n" + "-" * 60)
+    print(f"VENTILATION DES HORS-MARGE - {type_local.upper()} ({len(hors)}/{len(df)} biens)")
+    print("-" * 60)
+
+    # Sens de l'erreur : sous-estimation ou sur-estimation ?
+    nb_sous = int(hors['sous_estime'].sum())
+    print(f"\n  Sens de l'erreur : {nb_sous} sous-estimes | {len(hors) - nb_sous} sur-estimes")
+
+    # Par tranche de prix reel au m2 (quartiles du jeu de test complet)
+    df = df.copy()
+    df['tranche_prix'] = pd.qcut(df['prix_m2_reel'], q=4,
+                                 labels=['Q1 (bas)', 'Q2', 'Q3', 'Q4 (haut)'],
+                                 duplicates='drop')
+    print("\n  Par tranche de prix/m2 reel :")
+    stats = df.groupby('tranche_prix', observed=True).agg(
+        n=('dans_marge', 'size'),
+        pct_hors=('dans_marge', lambda s: 100 * (1 - s.mean())),
+        mape=('erreur_rel', lambda s: 100 * s.mean()),
+    )
+    for tranche, r in stats.iterrows():
+        print(f"    {str(tranche):10s} : {r['pct_hors']:5.1f} % hors marge | MAPE {r['mape']:5.1f} % | n={int(r['n'])}")
+
+    # Par tranche de surface
+    df['tranche_surf'] = pd.cut(df['surface'], bins=[0, 50, 90, 130, 400],
+                                labels=['<50 m2', '50-90', '90-130', '>130'])
+    print("\n  Par surface :")
+    stats = df.groupby('tranche_surf', observed=True).agg(
+        n=('dans_marge', 'size'),
+        pct_hors=('dans_marge', lambda s: 100 * (1 - s.mean())),
+        mape=('erreur_rel', lambda s: 100 * s.mean()),
+    )
+    for tranche, r in stats.iterrows():
+        if r['n'] > 0:
+            print(f"    {str(tranche):10s} : {r['pct_hors']:5.1f} % hors marge | MAPE {r['mape']:5.1f} % | n={int(r['n'])}")
+
+    # Avec / sans terrain
+    df['cat_terrain'] = np.where(df['terrain'] > 0, 'avec terrain', 'sans terrain')
+    print("\n  Terrain :")
+    stats = df.groupby('cat_terrain').agg(
+        n=('dans_marge', 'size'),
+        pct_hors=('dans_marge', lambda s: 100 * (1 - s.mean())),
+        mape=('erreur_rel', lambda s: 100 * s.mean()),
+    )
+    for cat, r in stats.iterrows():
+        print(f"    {cat:12s} : {r['pct_hors']:5.1f} % hors marge | MAPE {r['mape']:5.1f} % | n={int(r['n'])}")
+
+    # Communes les plus touchees
+    print("\n  Communes avec le plus de hors-marge :")
+    top_communes = hors.groupby('code_commune').agg(
+        nb_hors=('erreur_rel', 'size'),
+        mape=('erreur_rel', lambda s: 100 * s.mean()),
+    ).sort_values('nb_hors', ascending=False).head(8)
+    for com, r in top_communes.iterrows():
+        total_com = (df['code_commune'] == com).sum()
+        print(f"    {com} : {int(r['nb_hors'])}/{total_com} hors marge | MAPE {r['mape']:5.1f} %")
+
+    # Les 5 pires erreurs, pour inspection manuelle
+    print("\n  Les 5 pires erreurs (a inspecter dans la base) :")
+    pires = hors.nlargest(5, 'erreur_rel')
+    for _, r in pires.iterrows():
+        sens = "sous-estime" if r['sous_estime'] else "sur-estime"
+        print(f"    id {r['id']} | {r['code_commune']} | {r['surface']:.0f} m2 | "
+              f"reel {r['prix_total_reel']:>9.0f} vs estime {r['prix_total_estime']:>9.0f} "
+              f"({r['erreur_rel']*100:.0f} %, {sens})")
 
 # ==========================================
 # EXECUTION DES TESTS POUR UN TYPE
@@ -97,9 +192,14 @@ def tester_type(type_local, type_bien_estimer, n):
         res = estimer(
             adresse="(test)", surface=surface, type_bien=type_bien_estimer,
             nb_pieces=nb_pieces, surface_terrain=terrain,
-            geo_resolu=geo_resolu
+            geo_resolu=geo_resolu,
+            code_section=str(b['id_parcelle'])[:10]
         )
 
+        terrain = float(b['surface_terrain']) if pd.notna(b['surface_terrain']) else 0
+        if type_bien_estimer == 'appartements':
+            terrain = 0
+        
         if 'erreur' in res or 'suggestions' in res:
             print(f"{i:>3}  -- estimation impossible --")
             continue
@@ -120,11 +220,16 @@ def tester_type(type_local, type_bien_estimer, n):
 
         resultats.append({
             'id': b['id'],
+            'code_commune': str(b['code_commune']),
+            'surface': surface,
+            'terrain': terrain,
+            'prix_m2_reel': float(b['prix_m2_reel']),
             'prix_total_reel': prix_total_reel,
             'prix_total_estime': prix_total_estime,
             'total_bas': total_bas,
             'total_haut': total_haut,
             'erreur_rel': erreur_rel,
+            'sous_estime': prix_total_estime < prix_total_reel,
             'dans_marge': dans_marge,
             'dans_fourchette': total_bas <= prix_total_reel <= total_haut,
         })
@@ -139,10 +244,12 @@ def tester_type(type_local, type_bien_estimer, n):
 
     print("-" * 108)
     print(f"RESUME {type_local.upper()} ({len(df)} tests) :")
-    print(f"  Dans la marge (<= 20%)     : {nb_ok} tests ({nb_ok / len(df) * 100:.1f} %)")
-    print(f"  Hors marge (> 20%)         : {nb_hors} tests ({nb_hors / len(df) * 100:.1f} %)")
-    print(f"  Erreur % moyenne (MAPE)    : {df['erreur_rel'].mean() * 100:.1f} %")
-    print(f"  Couverture (dans fourchette): {df['dans_fourchette'].mean() * 100:.1f} %")
+    print(f"  Dans la marge (<= 20%)      : {nb_ok} tests ({nb_ok / len(df) * 100:.1f} %)")
+    print(f"  Hors marge (> 20%)          : {nb_hors} tests ({nb_hors / len(df) * 100:.1f} %)")
+    print(f"  Erreur % moyenne (MAPE)     : {df['erreur_rel'].mean() * 100:.1f} %")
+    print(f"  Couverture (dans fourchette): {df['dans_fourchette'].mean() * 100:.1f} % (attendu ~95 %)")
+    
+    ventiler_hors_marge(df, type_local)
 
     return df
 
@@ -150,6 +257,7 @@ def tester_type(type_local, type_bien_estimer, n):
 # LANCEMENT
 # ==========================================
 print(f"\nLancement : {nb_test} tests maisons + {nb_test} tests appartements (dep {departement})")
+print("Rappel : biens issus des donnees d'entrainement -> resultats optimistes.")
 
 df_maisons = tester_type('Maison', 'maisons', nb_test)
 df_apparts = tester_type('Appartement', 'appartements', nb_test)
