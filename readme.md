@@ -84,7 +84,7 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `infrastructures_mairies` | [Annuaire de l'administration (service-public.gouv.fr)](https://www.data.gouv.fr/datasets/lannuaire-de-ladministration-base-de-donnees-locales) | Distance à la mairie (proxy centre-ville) | Filtré sur `type_service_local = mairie` ; ~35 000 communes |
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 | `referentiel_communes` | [Référentiel géographique français (communes, aires urbaines...)](https://www.data.gouv.fr/datasets/referentiel-geographique-francais-communes-unites-urbaines-aires-urbaines-departements-academies-regions-1) | Aires d'attraction des villes → potentiel urbain | Poids d'un pôle = nombre de communes de son aire |
-| `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | **En cours d'évaluation** — varie géographiquement (voir note ci-dessous) |
+| `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | varie géographiquement (voir note ci-dessous) |
 
 ### Sources testées mais écartées
 
