@@ -73,7 +73,8 @@ print("\n--- Feature experimentale ---")
 FA['potentiel_urbain'] = demander("Potentiel urbain ?", True)
 FA['chomage'] = demander("Taux de chomage departemental ?", True)
 FA['pib'] = demander("PIB national ?", False)
-
+FA['taux_credit'] = demander("Taux credit immobilier ?", True)
+FA['inflation']   = demander("Taux d'inflation ?", True)
 # ==========================================
 # 1. CONNEXION + CHOIX DE LA ZONE
 # ==========================================
@@ -233,6 +234,16 @@ pib = None
 if FA['pib']:
     pib = pd.read_sql("SELECT annee, pib_national FROM pib_national", con=moteur)
 
+# Taux macro (mensuel, national) - charge si au moins un des deux est actif
+taux = None
+if FA['taux_credit'] or FA['inflation']:
+    cols_taux = []
+    if FA['taux_credit']: cols_taux.append('taux_credit_immo_fixe')
+    if FA['inflation']:   cols_taux.append('taux_inflation')
+    taux = pd.read_sql(
+        f"SELECT annee, mois, {', '.join(cols_taux)} FROM taux_macro",
+        con=moteur
+    )
 # ==========================================
 # 2. FUSION GLOBALE
 # ==========================================
@@ -254,6 +265,12 @@ if pib is not None:
     donnees = pd.merge(donnees, pib, left_on='annee_vente', right_on='annee', how='left')
     donnees = donnees.drop(columns=['annee'], errors='ignore')
 
+# Jointure des taux macro (par annee + mois de la vente)
+if taux is not None:
+    donnees = pd.merge(donnees, taux,
+                       left_on=['annee_vente', 'mois_vente'],
+                       right_on=['annee', 'mois'], how='left')
+    donnees = donnees.drop(columns=['annee', 'mois'], errors='ignore')
 # ==========================================
 # 3. DISTANCES SPATIALES
 # ==========================================
@@ -336,6 +353,10 @@ if 'taux_chomage' in donnees.columns:
 if 'pib_national' in donnees.columns:
     donnees['pib_national'] = donnees['pib_national'].fillna(donnees['pib_national'].median())
 
+for col in ['taux_credit_immo_fixe', 'taux_inflation']:
+    if col in donnees.columns:
+        donnees[col] = donnees[col].fillna(donnees[col].median())
+
 donnees_propres = donnees[
     (donnees['surface_reelle_bati'] >= 9) & (donnees['surface_reelle_bati'] <= 300)
 ].copy()
@@ -376,6 +397,10 @@ def build_features_base():
     if FA['dist_hopital']:    f += ['dist_hopital_m']
     if FA['dist_universite']: f += ['dist_universite_m']
     if FA['dist_littoral']:   f += ['dist_mer_m', 'dist_lac_m', 'dist_estuaire_m']
+    if FA['taux_credit'] and 'taux_credit_immo_fixe' in donnees_propres.columns:
+        f += ['taux_credit_immo_fixe']
+    if FA['inflation'] and 'taux_inflation' in donnees_propres.columns:
+        f += ['taux_inflation']
     return list(dict.fromkeys(f))  # dedoublonne en gardant l'ordre
 
 features_base = build_features_base()
@@ -396,11 +421,11 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
-    plancher = max(df_bien['prix_m2'].quantile(0.01), 800)
-    plafond = min(df_bien['prix_m2'].quantile(0.99), 15000)
+    # plancher = max(df_bien['prix_m2'].quantile(0.01), 500)
+    # plafond = min(df_bien['prix_m2'].quantile(0.99), 15000)
 
-    # plancher = df_bien['prix_m2'].quantile(0.01)
-    # plafond = df_bien['prix_m2'].quantile(0.99)
+    plancher = df_bien['prix_m2'].quantile(0.01)
+    plafond = df_bien['prix_m2'].quantile(0.99)
 
     # --- Filtre de coherence marche : prix plausible vs la commune ---
     # Elimine les transactions hors marche (ventes familiales, parts indivises,
@@ -582,6 +607,14 @@ for type_bien, df_bien in datasets.items():
         pib_recent = pib.sort_values('annee')['pib_national'].iloc[-1]
         contexte['pib_recent'] = float(pib_recent)
 
+    # Taux macro : on sauvegarde les valeurs du DERNIER mois connu.
+    if taux is not None:
+        dernier = taux.sort_values(['annee', 'mois']).iloc[-1]
+        if FA['taux_credit']:
+            contexte['taux_credit_recent'] = float(dernier['taux_credit_immo_fixe'])
+        if FA['inflation']:
+            contexte['taux_inflation_recent'] = float(dernier['taux_inflation'])
+            
     with open(DOSSIER_MODELE / f"contexte_{type_bien}.pkl", "wb") as f:
         pickle.dump(contexte, f)
 

@@ -282,6 +282,12 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
             CTX['chomage_par_departement'].get(code_dep, CTX['chomage_median_global'])
         )
 
+    # Taux macro : derniers taux connus, sauvegardes par l'entrainement
+    if 'taux_credit_recent' in CTX:
+        valeurs['taux_credit_immo_fixe'] = CTX['taux_credit_recent']
+    if 'taux_inflation_recent' in CTX:
+        valeurs['taux_inflation'] = CTX['taux_inflation_recent']
+        
     # PIB national : dernier PIB connu (si la feature etait active a l'entrainement)
     if 'pib_recent' in CTX:
         valeurs['pib_national'] = float(CTX['pib_recent'])

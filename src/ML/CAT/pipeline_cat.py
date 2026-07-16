@@ -207,6 +207,9 @@ revenus = pd.read_sql(f"""
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col], errors='coerce')
 
+# Taux macro (mensuel, national) : credit immobilier fixe + inflation
+taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FROM taux_macro", con=moteur) 
+
 RAYON_TERRE_METRES = 6371000
 
 def extraire_points_contour(sous_gdf):
@@ -263,6 +266,16 @@ def traiter_type(filtre_type, suffixe_type):
     # --- Fusion ---
     donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
     donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+
+    # --- Fusion ---
+    donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
+    donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+
+    # Jointure des taux macro par annee + mois de la vente
+    donnees = pd.merge(donnees, taux,
+                       left_on=['annee_vente', 'mois_vente'],
+                       right_on=['annee', 'mois'], how='left')
+    donnees = donnees.drop(columns=['annee', 'mois'], errors='ignore')
 
     # --- Distances spatiales ---
     maisons_rad = np.deg2rad(donnees[['latitude', 'longitude']])
@@ -337,7 +350,8 @@ def traiter_type(filtre_type, suffixe_type):
                          'surface_terrain','log_terrain','potentiel_urbain',
                          'median_revenu_disponible','indice_gini','pct_minima_sociaux']
 
-    features = ['est_maison','latitude','longitude','nombre_pieces_principales','annee_vente','mois_vente','a_terrain'] \
+    features = ['est_maison','latitude','longitude','nombre_pieces_principales','annee_vente','mois_vente','a_terrain',
+                'taux_credit_immo_fixe','taux_inflation'] \
                + colonnes_dpe + colonnes_chauffage + colonnes_standard + colonnes_dist
 
     X = donnees_propres[features]
