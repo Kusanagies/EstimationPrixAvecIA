@@ -85,6 +85,7 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 | `referentiel_communes` | [Référentiel géographique français (communes, aires urbaines...)](https://www.data.gouv.fr/datasets/referentiel-geographique-francais-communes-unites-urbaines-aires-urbaines-departements-academies-regions-1) | Aires d'attraction des villes → potentiel urbain | Poids d'un pôle = nombre de communes de son aire |
 | `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | varie géographiquement (voir note ci-dessous) |
+| `taux_macro` | [Taux d'intéret immobilie fixe (Banque de France)](https://webstat.banque-france.fr/fr/recherche/resultats/?q=Taux%20d%27int%C3%A9ret) | Taux d'intéret pour les entreprises et particulier(fixe et variable) | 
 
 ### Sources testées mais écartées
 
