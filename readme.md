@@ -84,6 +84,7 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `infrastructures_mairies` | [Annuaire de l'administration (service-public.gouv.fr)](https://www.data.gouv.fr/datasets/lannuaire-de-ladministration-base-de-donnees-locales) | Distance à la mairie (proxy centre-ville) | Filtré sur `type_service_local = mairie` ; ~35 000 communes |
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 | `referentiel_communes` | [Référentiel géographique français (communes, aires urbaines...)](https://www.data.gouv.fr/datasets/referentiel-geographique-francais-communes-unites-urbaines-aires-urbaines-departements-academies-regions-1) | Aires d'attraction des villes → potentiel urbain | Poids d'un pôle = nombre de communes de son aire |
+| `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | **En cours d'évaluation** — varie géographiquement (voir note ci-dessous) |
 
 ### Sources testées mais écartées
 
@@ -114,9 +115,33 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
   raison que les taux : redondante avec l'effet temporel déjà capté. *(Pourrait
   avoir plus de sens à l'échelle France entière, où des départements âgés se
   distinguent de départements jeunes — non retenue à ce stade.)*
+- **PIB national** : produit intérieur brut annuel de la France (comptes nationaux
+  INSEE, 1949-2024). **Corrélation de +0,94 avec `annee_vente`** sur la période DVF,
+  et surtout **aucune variation géographique** : le PIB est le même pour tous les
+  départements une année donnée. C'est le cas le plus extrême de feature purement
+  temporelle — il ne peut pas discriminer les biens entre eux. Écarté. *(Un PIB
+  régional ou par habitant, qui distinguerait les territoires, serait en revanche
+  potentiellement intéressant — comme l'est déjà le revenu médian communal.)*
 - [Référentiel des arrêts — arrêts transporteur](https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur)
 - [Dans ma rue — anomalies signalées](https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees) (Paris)
 - [Les commerces par commune ou arrondissement — base permanente des équipements IDF](https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf) (Île-de-France)
+
+### Source en cours d'évaluation : taux de chômage départemental
+
+Contrairement aux taux d'intérêt, au PIB et à la pyramide des âges (tous écartés
+car purement temporels), le **taux de chômage par département** possède une
+**dimension géographique** : il varie fortement d'un département à l'autre (par
+exemple ~5-6 % dans l'Ain contre ~12-14 % dans l'Aisne sur les mêmes périodes).
+Cette variation entre territoires est précisément ce qui peut apporter du signal,
+comme le fait déjà le revenu médian communal.
+
+Point de méthode important : sur un modèle **mono-département**, le chômage ne
+varie que dans le temps (une seule série) et redevient donc redondant avec
+`annee_vente`. Son intérêt ne peut se révéler qu'à l'échelle **multi-départements /
+France entière**, où les écarts entre territoires jouent pleinement. L'évaluation
+est donc menée en France entière (matrice de corrélation + SHAP) avant toute
+décision d'intégration en production. *Démarche : mesurer dans le bon cadre avant
+de conclure.*
 
 ---
 
@@ -278,9 +303,12 @@ répond à un choix concret rencontré pendant le développement.
 - **Pistes de features à plus fort potentiel** : vraie section cadastrale via
   l'API Carto de l'IGN (pour ne plus dégrader `prix_m2_section` en médiane
   communale en production), extension du potentiel urbain aux départements
-  frontaliers (avec pôles étrangers). *Note : la centralité (mairie), les taux
-  d'intérêt et la pyramide des âges ont été testés puis écartés — voir « Sources
-  testées mais écartées ».*
+  frontaliers (avec pôles étrangers), et **taux de chômage départemental** (en
+  cours d'évaluation — première feature socio-économique temporelle à avoir une
+  vraie dimension géographique, contrairement aux taux/PIB écartés). Un **PIB
+  régional par habitant** serait dans la même veine prometteuse. *Note : la
+  centralité (mairie), les taux d'intérêt, la pyramide des âges et le PIB national
+  ont été testés puis écartés — voir « Sources testées mais écartées ».*
 
 ---
 
