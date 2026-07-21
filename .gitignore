@@ -8,3 +8,4 @@ modele_production_france/
 34/
 src/ML/CAT/catboost_info
 src/ML/__pycache__
+src/ML/script/catboost_info
