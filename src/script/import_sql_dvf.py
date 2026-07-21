@@ -27,7 +27,11 @@ from dotenv import load_dotenv
 # CONFIGURATION
 # ==========================================
 RACINE_PROJET = Path(__file__).resolve().parents[2]  # adapte la profondeur si besoin
-DOSSIER_SQL = RACINE_PROJET / "data" / "etalab_dvf"
+if len(sys.argv) > 1:
+    arg = Path(sys.argv[1])
+    DOSSIER_SQL = arg if arg.is_absolute() else (RACINE_PROJET / arg)
+else:
+    DOSSIER_SQL = RACINE_PROJET / "data" / "etalab_dvf"
 BASE = "EstimationIA"
 UTILISATEUR = "root"
 

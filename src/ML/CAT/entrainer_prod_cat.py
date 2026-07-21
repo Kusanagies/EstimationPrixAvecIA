@@ -545,7 +545,7 @@ for type_bien, df_bien in datasets.items():
     for nom, alpha in quantiles.items():
         m = CatBoostRegressor(
             loss_function=f'Quantile:alpha={alpha}',
-            iterations=1000, learning_rate=0.04, depth=8,
+            iterations=2000, learning_rate=0.04, depth=8,
             l2_leaf_reg=3.0,
             random_seed=42, early_stopping_rounds=50, verbose=False
         )
