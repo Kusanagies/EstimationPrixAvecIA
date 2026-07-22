@@ -512,8 +512,8 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
-    plancher = df_bien['prix_m2'].quantile(0.01)
-    plafond  = df_bien['prix_m2'].quantile(0.99)
+    plancher = max(df_bien['prix_m2'].quantile(0.01), 500)
+    plafond = min(df_bien['prix_m2'].quantile(0.99), 20000)
 
     df_bien = df_bien[
         (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)
