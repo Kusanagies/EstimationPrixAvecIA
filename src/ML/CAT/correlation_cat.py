@@ -14,77 +14,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 import geopandas as gpd
 
-# Enlever si on veut reactiver Optuna 
-""" 
-import optuna
-def perte_pinball(y_vrai, y_pred, alpha=0.5):
-    """""" Perte pinball (quantile loss). Pour alpha=0.5, c'est l'erreur absolue / 2.""""""
-    erreur = y_vrai - y_pred
-    return np.mean(np.maximum(alpha * erreur, (alpha - 1) * erreur))
-def tuner_hyperparametres(X_train, y_train, n_essais=100):
-    # Lance l'optimisation Optuna sur le modele median CatBoost.
-    # Retourne le dictionnaire des meilleurs hyperparametres.
-    # Sous-split train / validation pour evaluer chaque essai
-    X_tr, X_val, y_tr, y_val = train_test_split(
-        X_train, y_train, test_size=0.2, random_state=42
-    )
-    def objectif(trial):
-        # Espace de recherche : les hyperparametres CatBoost a explorer
-        params = {
-            'loss_function': 'Quantile:alpha=0.5',
-            'iterations': 4000,             # plafond eleve, l'early stopping coupe
-            'random_seed': 42,
-            'verbose': False,
-            'early_stopping_rounds': 50,
-            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-            'depth': trial.suggest_int('depth', 4, 10),
-            'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0.5, 10.0, log=True),
-            'random_strength': trial.suggest_float('random_strength', 0.0, 2.0),
-            'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
-            'border_count': trial.suggest_int('border_count', 32, 255),
-        }
-        modele = CatBoostRegressor(**params)
-        modele.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
-
-        # On evalue la perte pinball sur la validation (metrique adaptee au quantile)
-        pred_val = modele.predict(X_val)
-        return perte_pinball(y_val.values, pred_val, alpha=0.5)
-
-    # 'minimize' car on minimise la perte pinball
-    etude = optuna.create_study(direction='minimize')
-    etude.optimize(objectif, n_trials=n_essais, show_progress_bar=True)
-    print("\n" + "=" * 50)
-    print("MEILLEURS HYPERPARAMETRES TROUVES (CatBoost)")
-    print("=" * 50)
-    for nom, val in etude.best_params.items():
-        print(f"  {nom:22s} : {val}")
-    print(f"\nMeilleure perte pinball : {etude.best_value:.5f}")
-    print("=" * 50)
-    return etude.best_params
-
-# ==========================================
-# EXEMPLE D'UTILISATION
-# ==========================================
-# Dans ton pipeline, une fois X_train / y_train prets :
-#
-#   meilleurs = tuner_hyperparametres(X_train, y_train, n_essais=100)
-#
-# Puis tu entraines les 3 quantiles avec ces hyperparametres,
-# en changeant seulement alpha dans loss_function :
-#
-#   quantiles = {'bas': 0.025, 'median': 0.50, 'haut': 0.975}
-#   modeles_q = {}
-#   for nom_q, alpha in quantiles.items():
-#       m = CatBoostRegressor(
-#           loss_function=f'Quantile:alpha={alpha}',
-#           iterations=4000, random_seed=42, verbose=False,
-#           early_stopping_rounds=50,
-#           **meilleurs   # les hyperparametres tunes sur le median
-#       )
-#       m.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
-#       modeles_q[nom_q] = m
-"""
-
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
 # ==========================================
@@ -454,6 +383,9 @@ donnees_propres.loc[mask_appart, 'surface_terrain'] = 0
 # FEATURE ENGINEERING : creation des variables derivees
 # ==========================================
 donnees_propres['log_prix_m2'] = np.log(donnees_propres['prix_m2'])
+# CIBLE = PRIX TOTAL (le modele predit directement des euros, pas du EUR/m2)
+donnees_propres['prix_total'] = donnees_propres['prix_m2'] * donnees_propres['surface_reelle_bati']
+donnees_propres['log_prix_total'] = np.log(donnees_propres['prix_total'])
 donnees_propres['log_surface'] = np.log(donnees_propres['surface_reelle_bati'])
 donnees_propres['surface_par_piece'] = donnees_propres['surface_reelle_bati'] / donnees_propres['nombre_pieces_principales']
 donnees_propres['a_terrain'] = (donnees_propres['surface_terrain'] > 0).astype(int)
@@ -512,8 +444,8 @@ for type_bien, df_bien in datasets.items():
         print(f"\n--- IGNORÉ : Pas assez de donnees pour le type {type_bien} ---")
         continue
 
-    plancher = max(df_bien['prix_m2'].quantile(0.01), 500)
-    plafond = min(df_bien['prix_m2'].quantile(0.99), 20000)
+    plancher = df_bien['prix_m2'].quantile(0.01)
+    plafond  = df_bien['prix_m2'].quantile(0.99)
 
     df_bien = df_bien[
         (df_bien['prix_m2'] >= plancher) & (df_bien['prix_m2'] <= plafond)
@@ -525,7 +457,7 @@ for type_bien, df_bien in datasets.items():
     print("=" * 50)
 
     X = df_bien[features_base].copy()
-    y = df_bien['log_prix_m2']
+    y = df_bien['log_prix_total']
 
     annee_max = df_bien['annee_vente'].max()
     train_mask = df_bien['annee_vente'] < annee_max
@@ -656,7 +588,7 @@ for type_bien, df_bien in datasets.items():
     for nom_q, alpha in quantiles.items():
         m = CatBoostRegressor(
             loss_function=f'Quantile:alpha={alpha}',
-            iterations = 2000, learning_rate=0.04,depth=8,
+            iterations = 1000, learning_rate=0.04,depth=8,
             random_seed=42,early_stopping_rounds=50,verbose=False
         )
         m.fit(X_tr,y_tr,eval_set=(X_val,y_val),use_best_model=True)
@@ -673,6 +605,7 @@ for type_bien, df_bien in datasets.items():
     pred_med_log = modeles_q['median'].predict(X_test)
     pred_haut_log = modeles_q['haut'].predict(X_test)
 
+    # Le modele predit maintenant directement le PRIX TOTAL (en log)
     prix_reels_euros = np.exp(y_test)
     prix_bas = np.exp(pred_bas_log)
     prix_predits_euros = np.exp(pred_med_log)
@@ -680,16 +613,25 @@ for type_bien, df_bien in datasets.items():
 
     prix_bas, prix_haut = np.minimum(prix_bas, prix_haut), np.maximum(prix_bas, prix_haut)
 
-    mae = mean_absolute_error(prix_reels_euros, prix_predits_euros)
-    mape = np.mean(np.abs((prix_reels_euros - prix_predits_euros) / prix_reels_euros)) * 100
-    erreur_mediane = np.median(np.abs(prix_reels_euros - prix_predits_euros))
-    rmse = np.sqrt(np.mean((prix_reels_euros.values - prix_predits_euros) ** 2))
-    erreur_rel = np.abs(prix_reels_euros.values - prix_predits_euros) / prix_reels_euros
-    r2_euros = r2_score(prix_reels_euros, prix_predits_euros)
+    # Les predictions sont deja des PRIX TOTAUX (euros) : pas de multiplication.
+    total_reel = prix_reels_euros.values
+    total_pred = prix_predits_euros
+    total_bas = prix_bas
+    total_haut = prix_haut
 
-    dans_intervalle = (prix_reels_euros.values >= prix_bas) & (prix_reels_euros.values <= prix_haut)
+    # Metriques sur le PRIX TOTAL
+    mae = mean_absolute_error(total_reel, total_pred)
+    mape = np.mean(np.abs((total_reel - total_pred) / total_reel)) * 100
+    erreur_mediane = np.median(np.abs(total_reel - total_pred))
+    rmse = np.sqrt(np.mean((total_reel - total_pred) ** 2))
+    # RMSLE : erreur quadratique dans l'espace log (erreur RELATIVE).
+    rmsle = np.sqrt(np.mean((np.log1p(total_pred) - np.log1p(total_reel)) ** 2))
+    erreur_rel = np.abs(total_reel - total_pred) / total_reel
+    r2_euros = r2_score(total_reel, total_pred)
+
+    dans_intervalle = (total_reel >= total_bas) & (total_reel <= total_haut)
     couverture = np.mean(dans_intervalle) * 100
-    largeur_moyenne = np.mean(prix_haut - prix_bas)
+    largeur_moyenne = np.mean(total_haut - total_bas)
 
     print(f"Calcul des valeurs SHAP pour {type_bien}...")
     explainer = shap.TreeExplainer(modele_cat)
@@ -747,9 +689,9 @@ for type_bien, df_bien in datasets.items():
     plt.scatter(prix_reels_euros, prix_predits_euros, alpha=0.3, s=10)
     lims = [min(prix_reels_euros.min(), prix_predits_euros.min()), max(prix_reels_euros.max(), prix_predits_euros.max())]
     plt.plot(lims, lims, 'r--', linewidth=2, label='Prédiction parfaite')
-    plt.axhline(np.mean(prix_predits_euros), color='blue', linestyle=':', linewidth=2, label=f'Moyenne prédite : {np.mean(prix_predits_euros):.0f} EUR/m²')
-    plt.xlabel("Prix réel (EUR/m²)")
-    plt.ylabel("Prix prédit (EUR/m²)")
+    plt.axhline(np.mean(prix_predits_euros), color='blue', linestyle=':', linewidth=2, label=f'Moyenne prédite : {np.mean(prix_predits_euros):.0f} EUR')
+    plt.xlabel("Prix réel (EUR)")
+    plt.ylabel("Prix prédit (EUR)")
     plt.title(f"Prédictions vs réalité (CatBoost) - {nom_zone} ({type_bien})")
     plt.legend()
     plt.tight_layout()
@@ -760,8 +702,8 @@ for type_bien, df_bien in datasets.items():
     plt.figure(figsize=(9, 5))
     plt.hist(residus, bins=50, edgecolor='black', alpha=0.7)
     plt.axvline(0, color='red', linestyle='--', label='Erreur nulle')
-    plt.axvline(np.mean(residus), color='orange', linestyle='--', label=f'Biais moyen : {np.mean(residus):.0f} EUR/m²')
-    plt.xlabel("Résidu (réel - prédit) en EUR/m²")
+    plt.axvline(np.mean(residus), color='orange', linestyle='--', label=f'Biais moyen : {np.mean(residus):.0f} EUR')
+    plt.xlabel("Résidu (réel - prédit) en EUR")
     plt.ylabel("Nombre de biens")
     plt.title(f"Distribution des erreurs (CatBoost) - {nom_zone} ({type_bien})")
     plt.legend()
@@ -779,7 +721,7 @@ for type_bien, df_bien in datasets.items():
     plt.plot(x_axis, prix_predits_euros[ech], color='navy', linewidth=1, label='Prediction (median)')
     plt.scatter(x_axis, prix_reels_euros.values[ech], color='red', s=8, label='Prix reel')
     plt.xlabel("Biens (tries par prix predit)")
-    plt.ylabel("Prix (EUR/m²)")
+    plt.ylabel("Prix (EUR)")
     plt.title(f"Intervalles de confiance - {nom_zone} ({type_bien})")
     plt.legend()
     plt.tight_layout()
@@ -787,18 +729,19 @@ for type_bien, df_bien in datasets.items():
     plt.close()
 
     print("\n" + "-" * 50)
-    print(f"RAPPORT CATBOOST - {type_bien.upper()}")
+    print(f"RAPPORT CATBOOST - {type_bien.upper()} - PRIX TOTAL")
     print("-" * 50)
     print(f"Apprentissage : {len(X_train)} biens | Validation : {len(X_test)} biens")
-    print(f"R2 (euros / m2) : {r2_euros * 100:.2f} %")
-    print(f"MAE             : {mae:.2f} EUR / m2")
+    print(f"R2              : {r2_euros * 100:.2f} %")
+    print(f"MAE             : {mae:,.0f} EUR")
     print(f"MAPE            : {mape:.1f} %")
-    print(f"Erreur mediane  : {erreur_mediane:.0f} EUR/m2")
-    print(f"RMSE            : {rmse:.0f} EUR/m2")
+    print(f"Erreur mediane  : {erreur_mediane:,.0f} EUR")
+    print(f"RMSE            : {rmse:,.0f} EUR")
+    print(f"RMSLE           : {rmsle:.4f} (erreur relative, espace log)")
     print(f"Dans les +/- 10%: {np.mean(erreur_rel <= 0.10) * 100:.1f} %")
     print(f"Dans les +/- 20%: {np.mean(erreur_rel <= 0.20) * 100:.1f} %")
     print(f"Couverture intervalle 95% : {couverture:.1f} %")
-    print(f"Largeur moyenne intervalle : {largeur_moyenne:.0f} EUR/m2")
+    print(f"Largeur moyenne intervalle : {largeur_moyenne:,.0f} EUR")
 
 print("\n" + "=" * 50)
 print(f"Temps de traitement global : {time.time() - temps_total_debut:.2f} secondes.")

@@ -316,6 +316,9 @@ for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflatio
 dp = donnees[(donnees['surface_reelle_bati']>=9) & (donnees['surface_reelle_bati']<=300)].copy()
 dp.loc[dp['type_local']=='Appartement', 'surface_terrain'] = 0
 dp['log_prix_m2'] = np.log(dp['prix_m2'])
+# CIBLE = PRIX TOTAL (le modele predit directement des euros, pas du EUR/m2)
+dp['prix_total'] = dp['prix_m2'] * dp['surface_reelle_bati']
+dp['log_prix_total'] = np.log(dp['prix_total'])
 dp['log_surface'] = np.log(dp['surface_reelle_bati'])
 dp['surface_par_piece'] = dp['surface_reelle_bati'] / dp['nombre_pieces_principales']
 dp['a_terrain'] = (dp['surface_terrain']>0).astype(int)
@@ -362,8 +365,8 @@ for type_bien, df_bien in datasets.items():
     if len(df_bien) < 50:
         print(f"\n--- {type_bien} ignore (pas assez de donnees) ---"); continue
 
-    plancher = max(df_bien['prix_m2'].quantile(0.01), 500)
-    plafond = min(df_bien['prix_m2'].quantile(0.99), 20000)
+    plancher = df_bien['prix_m2'].quantile(0.01)
+    plafond = df_bien['prix_m2'].quantile(0.99)
     df_bien = df_bien[(df_bien['prix_m2']>=plancher) & (df_bien['prix_m2']<=plafond)].copy()
 
     print("\n" + "=" * 50)
@@ -371,7 +374,7 @@ for type_bien, df_bien in datasets.items():
     print("=" * 50)
 
     X = df_bien[features_base].copy()
-    y = df_bien['log_prix_m2']
+    y = df_bien['log_prix_total']
 
     annee_max = df_bien['annee_vente'].max()
     train_mask = df_bien['annee_vente'] < annee_max
@@ -466,20 +469,24 @@ for type_bien, df_bien in datasets.items():
         modeles_q[nom_q] = m
     modele = modeles_q['median']
 
-    reels = np.exp(y_test)
-    pred = np.exp(modele.predict(X_test))
-    bas = np.exp(modeles_q['bas'].predict(X_test))
-    haut = np.exp(modeles_q['haut'].predict(X_test))
-    bas, haut = np.minimum(bas, haut), np.maximum(bas, haut)
+    # Le modele predit maintenant directement le PRIX TOTAL (en log)
+    total_reel = np.exp(y_test).values
+    total_pred = np.exp(modele.predict(X_test))
+    total_bas = np.exp(modeles_q['bas'].predict(X_test))
+    total_haut = np.exp(modeles_q['haut'].predict(X_test))
+    total_bas, total_haut = np.minimum(total_bas, total_haut), np.maximum(total_bas, total_haut)
 
-    mae = mean_absolute_error(reels, pred)
-    mape = np.mean(np.abs((reels-pred)/reels))*100
-    err_med = np.median(np.abs(reels-pred))
-    rmse = np.sqrt(np.mean((reels.values-pred)**2))
-    err_rel = np.abs(reels.values-pred)/reels
-    r2 = r2_score(reels, pred)
-    couv = np.mean((reels.values>=bas)&(reels.values<=haut))*100
-    largeur = np.mean(haut-bas)
+    # Metriques sur le PRIX TOTAL
+    mae = mean_absolute_error(total_reel, total_pred)
+    mape = np.mean(np.abs((total_reel - total_pred) / total_reel)) * 100
+    err_med = np.median(np.abs(total_reel - total_pred))
+    rmse = np.sqrt(np.mean((total_reel - total_pred) ** 2))
+    # RMSLE : erreur quadratique dans l'espace log (erreur RELATIVE).
+    rmsle = np.sqrt(np.mean((np.log1p(total_pred) - np.log1p(total_reel)) ** 2))
+    err_rel = np.abs(total_reel - total_pred) / total_reel
+    r2 = r2_score(total_reel, total_pred)
+    couv = np.mean((total_reel >= total_bas) & (total_reel <= total_haut)) * 100
+    largeur = np.mean(total_haut - total_bas)
 
     print(f"SHAP {type_bien}...")
     shap_vals = shap.TreeExplainer(modele).shap_values(X_test)
@@ -494,17 +501,18 @@ for type_bien, df_bien in datasets.items():
     plt.tight_layout(); plt.savefig(dossier_graphes / f"shap_{base}.png", dpi=150, bbox_inches='tight'); plt.close()
 
     print("\n" + "-"*50)
-    print(f"RAPPORT {type_bien.upper()} (source synthese)")
+    print(f"RAPPORT {type_bien.upper()} (source synthese) - PRIX TOTAL")
     print("-"*50)
     print(f"Apprentissage : {len(X_train)} | Test : {len(X_test)}")
-    print(f"R2 (euros/m2)   : {r2*100:.2f} %")
-    print(f"MAE             : {mae:.2f} EUR/m2")
+    print(f"R2              : {r2*100:.2f} %")
+    print(f"MAE             : {mae:,.0f} EUR")
     print(f"MAPE            : {mape:.1f} %")
-    print(f"Erreur mediane  : {err_med:.0f} EUR/m2")
-    print(f"RMSE            : {rmse:.0f} EUR/m2")
+    print(f"Erreur mediane  : {err_med:,.0f} EUR")
+    print(f"RMSE            : {rmse:,.0f} EUR")
+    print(f"RMSLE           : {rmsle:.4f} (erreur relative, espace log)")
     print(f"PE10 / PE20     : {np.mean(err_rel<=0.10)*100:.1f} % / {np.mean(err_rel<=0.20)*100:.1f} %")
     print(f"Couverture 95%  : {couv:.1f} %")
-    print(f"Largeur moyenne : {largeur:.0f} EUR/m2")
+    print(f"Largeur moyenne : {largeur:,.0f} EUR")
 
 print(f"\nTemps total : {time.time()-temps_debut:.2f}s")
 print(f"Graphes : {dossier_graphes}")
