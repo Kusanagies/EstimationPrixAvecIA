@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from dotenv import load_dotenv
 import geopandas as gpd
+from analyse_normalite import analyser_normalite_log
 
 # ==========================================
 # 0. CONNEXION INITIALE ET MENU INTERACTIF
@@ -618,6 +619,8 @@ for type_bien, df_bien in datasets.items():
     total_pred = prix_predits_euros
     total_bas = prix_bas
     total_haut = prix_haut
+    
+    analyser_normalite_log(total_reel, total_pred, dossier_graphes, nom_zone, type_bien)
 
     # Metriques sur le PRIX TOTAL
     mae = mean_absolute_error(total_reel, total_pred)
