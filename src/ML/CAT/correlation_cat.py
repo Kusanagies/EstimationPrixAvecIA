@@ -647,6 +647,13 @@ for type_bien, df_bien in datasets.items():
     couverture = np.mean(dans_intervalle) * 100
     largeur_moyenne = np.mean(total_haut - total_bas)
 
+    # Analyse de normalite des erreurs log (regle 68-95, QQ-plot, histogramme)
+    try:
+        from analyse_normalite import analyser_normalite_log
+        analyser_normalite_log(total_reel, total_pred, dossier_graphes, nom_zone, type_bien)
+    except Exception as e:
+        print(f"  (analyse de normalite non disponible : {e})")
+
     print(f"Calcul des valeurs SHAP pour {type_bien}...")
     explainer = shap.TreeExplainer(modele_cat)
     shap_values = explainer.shap_values(X_test)

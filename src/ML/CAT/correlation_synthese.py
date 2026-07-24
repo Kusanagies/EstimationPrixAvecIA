@@ -502,6 +502,13 @@ for type_bien, df_bien in datasets.items():
     couv = np.mean((total_reel >= total_bas) & (total_reel <= total_haut)) * 100
     largeur = np.mean(total_haut - total_bas)
 
+    # Analyse de normalite des erreurs log (regle 68-95, QQ-plot, histogramme)
+    try:
+        from analyse_normalite import analyser_normalite_log
+        analyser_normalite_log(total_reel, total_pred, dossier_graphes, nom_zone, type_bien)
+    except Exception as e:
+        print(f"  (analyse de normalite non disponible : {e})")
+
     print(f"SHAP {type_bien}...")
     shap_vals = shap.TreeExplainer(modele).shap_values(X_test)
     imp = pd.Series(np.abs(shap_vals).mean(axis=0), index=X_test.columns).sort_values(ascending=False)
