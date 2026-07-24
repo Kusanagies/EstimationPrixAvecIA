@@ -309,6 +309,20 @@ for type_bien, df_bien in datasets.items():
     plafond = df_bien['prix_m2'].quantile(0.99)
     df_bien = df_bien[(df_bien['prix_m2']>=plancher) & (df_bien['prix_m2']<=plafond)].copy()
 
+    # --- Filtre de coherence marche (identique a l'evaluation) ---
+    # Elimine les transactions hors marche (ventes familiales sous-evaluees,
+    # parts indivises) en comparant chaque bien au prix median de SA commune.
+    # COHERENCE : ce meme filtre est applique dans correlation_cat/synthese.
+    stats_com = df_bien.groupby('code_commune')['prix_m2'].agg(['median', 'size'])
+    ref_com = df_bien['code_commune'].map(stats_com['median'])
+    n_com = df_bien['code_commune'].map(stats_com['size'])
+    ref_com = ref_com.where(n_com >= 10, df_bien['prix_m2'].median())
+    ratio = df_bien['prix_m2'] / ref_com
+    nb_avant = len(df_bien)
+    df_bien = df_bien[ratio.between(0.40, 2.50)].copy()
+    print(f"  Filtre coherence marche : {nb_avant - len(df_bien)} biens retires "
+          f"({(nb_avant - len(df_bien)) / nb_avant * 100:.1f} %)")
+
     print("\n" + "=" * 50)
     print(f"FLUX : {type_bien.upper()} ({len(df_bien)} biens)")
     print("=" * 50)
