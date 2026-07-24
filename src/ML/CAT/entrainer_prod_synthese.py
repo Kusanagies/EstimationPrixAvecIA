@@ -62,6 +62,10 @@ FA['densite']     = demander("Densite ventes 1km ?", True)
 FA['section']     = demander("Prix par section ?", True)
 print("\n--- Feature experimentale ---")
 FA['potentiel_urbain'] = demander("Potentiel urbain ?", True)
+FA['chomage']          = demander("Taux de chomage departemental ?", False)
+FA['taux_credit']      = demander("Taux de credit immobilier ?", False)
+FA['taux_inflation']   = demander("Taux d'inflation ?", False)
+FA['pib']              = demander("PIB national ?", False)
 
 # ==========================================
 # 1. CONNEXIONS ET ZONE
@@ -188,12 +192,37 @@ if FA['potentiel_urbain']:
         poles[c] = pd.to_numeric(poles[c], errors='coerce')
     poles = poles.dropna(subset=['latitude','longitude','poids_aire'])
 
+# Sources economiques experimentales (chargees seulement si actives)
+pib = None
+if FA['pib']:
+    pib = pd.read_sql("SELECT annee, pib_national FROM pib_national", con=moteur_enr)
+chomage = None
+if FA['chomage']:
+    chomage = pd.read_sql("SELECT code_departement, annee, trimestre, taux_chomage FROM chomage_departements", con=moteur_enr)
+taux = None
+if FA['taux_credit'] or FA['taux_inflation']:
+    taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FROM taux_macro", con=moteur_enr)
+
 # ==========================================
 # 2. FUSION ET DISTANCES
 # ==========================================
 print("Etape 2 : Fusion et distances...")
 donnees = pd.merge(maisons_apparts, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+
+# Cles departement + trimestre (pour le chomage)
+donnees['code_departement'] = donnees['code_commune'].str[:2]
+donnees['trimestre'] = (donnees['mois_vente'] - 1) // 3 + 1
+
+# Jointures economiques (si actives)
+if pib is not None:
+    donnees = pd.merge(donnees, pib, left_on='annee_vente', right_on='annee', how='left').drop(columns=['annee'], errors='ignore')
+if chomage is not None:
+    donnees = pd.merge(donnees, chomage, left_on=['code_departement','annee_vente','trimestre'],
+                       right_on=['code_departement','annee','trimestre'], how='left').drop(columns=['annee'], errors='ignore')
+if taux is not None:
+    donnees = pd.merge(donnees, taux, left_on=['annee_vente','mois_vente'],
+                       right_on=['annee','mois'], how='left').drop(columns=['annee','mois'], errors='ignore')
 
 RAYON_TERRE_METRES = 6371000
 points_rad = np.deg2rad(donnees[['latitude','longitude']])
@@ -257,6 +286,9 @@ donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 if 'potentiel_urbain' in donnees.columns:
     donnees['potentiel_urbain'] = donnees['potentiel_urbain'].fillna(donnees['potentiel_urbain'].median())
+for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation']:
+    if col in donnees.columns:
+        donnees[col] = donnees[col].fillna(donnees[col].median())
 
 donnees_propres = donnees[(donnees['surface_reelle_bati']>=9) & (donnees['surface_reelle_bati']<=300)].copy()
 mask_appart = donnees_propres['type_local'] == 'Appartement'
@@ -281,6 +313,10 @@ def build_features_base():
     if FA['dist_universite']: f += ['volume_etudiants_proche']
     if FA['revenus']:    f += colonnes_revenus
     if FA['potentiel_urbain'] and 'potentiel_urbain' in donnees_propres.columns: f += ['potentiel_urbain']
+    if FA['pib'] and 'pib_national' in donnees_propres.columns: f += ['pib_national']
+    if FA['chomage'] and 'taux_chomage' in donnees_propres.columns: f += ['taux_chomage']
+    if FA['taux_credit'] and 'taux_credit_immo_fixe' in donnees_propres.columns: f += ['taux_credit_immo_fixe']
+    if FA['taux_inflation'] and 'taux_inflation' in donnees_propres.columns: f += ['taux_inflation']
     if FA['dpe']:        f += colonnes_dpe
     if FA['chauffage']:  f += colonnes_chauffage
     if FA['dist_transport']:  f += ['dist_transport_m']
@@ -415,6 +451,19 @@ for type_bien, df_bien in datasets.items():
     }
     if poles is not None and len(poles) > 0:
         contexte['poles_urbains'] = poles[['latitude','longitude','poids_aire']].values
+
+    # Valeurs economiques recentes (pour qu'estimer.py reconstruise ces features)
+    if chomage is not None:
+        chomage_recent = (chomage.sort_values(['annee','trimestre'])
+                          .groupby('code_departement')['taux_chomage'].last().to_dict())
+        contexte['chomage_par_departement'] = chomage_recent
+        contexte['chomage_median_global'] = float(chomage['taux_chomage'].median())
+    if taux is not None:
+        dernier = taux.sort_values(['annee','mois']).iloc[-1]
+        contexte['taux_credit_recent'] = float(dernier['taux_credit_immo_fixe'])
+        contexte['taux_inflation_recent'] = float(dernier['taux_inflation'])
+    if pib is not None:
+        contexte['pib_recent'] = float(pib.sort_values('annee')['pib_national'].iloc[-1])
 
     with open(DOSSIER_MODELE / f"contexte_{type_bien}.pkl", "wb") as f:
         pickle.dump(contexte, f)
