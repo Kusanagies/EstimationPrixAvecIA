@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 # Import de la fonction d'estimation
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from estimer import estimer
+from estimer_catboost import estimer
 
 MARGE = 0.20        # marge de reference (20%)
 ANNEE_TEST = 2025   # on ne teste que sur cette annee
@@ -51,26 +51,50 @@ nb_test = int(input("Nombre de tests par type : ").strip())
 # TIRAGE DES BIENS DE TEST (ANNEE 2025 UNIQUEMENT)
 # ==========================================
 def tirer_biens(type_synthese, n):
-    """Tire n biens reels de l'annee 2025 pour un type donne."""
+    """Tire n biens reels de l'annee 2025, APRES filtre de coherence marche.
+    Le filtre (identique a l'entrainement/evaluation) compare chaque bien au
+    prix median de sa commune et exclut les transactions hors marche."""
+    # On charge TOUS les biens 2025 du type (pas seulement n) pour pouvoir
+    # calculer des medianes communales fiables avant de filtrer et d'echantillonner.
     df = pd.read_sql(f"""
-        SELECT id, communes_code AS code_insee, parcelles_code,
-               lat, lng, prix_m2, valeur_fonciere,
+        SELECT id, communes_code AS code_insee, communes_code AS code_commune,
+               parcelles_code, lat, lng, prix_m2, valeur_fonciere,
                surface AS surface_reelle_bati, nb_pieces AS nombre_pieces_principales,
                surface_terrain, adresses_numero, adresses_voie
         FROM synthese
         WHERE departements_code = '{departement}'
           AND typebien = '{type_synthese}'
           AND YEAR(date) = {ANNEE_TEST}          -- <<< FILTRE ANNEE 2025
-          AND surface > 9 AND prix_m2 > 0 AND nb_pieces > 0
-        ORDER BY RAND()
-        LIMIT {n};
+          AND surface > 9 AND prix_m2 > 0 AND nb_pieces > 0;
     """, con=moteur)
     # Conversions numeriques (synthese renvoie du 'object' avec les NULL)
     for c in ['prix_m2','valeur_fonciere','surface_reelle_bati',
               'nombre_pieces_principales','surface_terrain','lat','lng']:
         df[c] = pd.to_numeric(df[c], errors='coerce')
     df = df.dropna(subset=['valeur_fonciere','surface_reelle_bati','nombre_pieces_principales','lat','lng'])
-    return df
+
+    if len(df) == 0:
+        return df
+
+    # --- Filtres identiques a l'entrainement/evaluation ---
+    # 1) Aberrations de prix par quantiles (0.01 / 0.99)
+    plancher = df['prix_m2'].quantile(0.01)
+    plafond = df['prix_m2'].quantile(0.99)
+    df = df[(df['prix_m2'] >= plancher) & (df['prix_m2'] <= plafond)].copy()
+
+    # 2) Coherence marche : ratio prix / mediane communale entre 0.40 et 2.50
+    stats_com = df.groupby('code_commune')['prix_m2'].agg(['median', 'size'])
+    ref_com = df['code_commune'].map(stats_com['median'])
+    n_com = df['code_commune'].map(stats_com['size'])
+    ref_com = ref_com.where(n_com >= 10, df['prix_m2'].median())
+    ratio = df['prix_m2'] / ref_com
+    nb_avant = len(df)
+    df = df[ratio.between(0.40, 2.50)].copy()
+    print(f"  Filtre coherence marche ({type_synthese}) : {nb_avant - len(df)} biens retires "
+          f"({(nb_avant - len(df)) / nb_avant * 100:.1f} %)")
+
+    # Echantillonnage final de n biens parmi les biens valides
+    return df.sample(n=min(n, len(df)), random_state=42).reset_index(drop=True)
 
 # ==========================================
 # TEST D'UN TYPE
@@ -126,7 +150,8 @@ def tester_type(type_synthese, type_modele, n):
     nb_ok = int(d['ok'].sum())
     print("-" * 108)
     print(f"RESUME {type_modele.upper()} ({ANNEE_TEST}) : {nb_ok} OK / {len(d)-nb_ok} hors marge sur {len(d)} | "
-          f"MAPE {d['err'].mean()*100:.1f} % | couverture {d['dans'].mean()*100:.1f} %")
+          f"MAPE {d['err'].mean()*100:.1f} % | err. mediane {d['err'].median()*100:.1f} % | "
+          f"couverture {d['dans'].mean()*100:.1f} %")
     return d
 
 # ==========================================
@@ -150,7 +175,8 @@ for tb, d in resultats_types.items():
     nb_ok = int(d['ok'].sum())
     total_ok += nb_ok; total_tests += len(d)
     print(f"{tb:12s} : {nb_ok} OK / {len(d)-nb_ok} hors marge sur {len(d)} | "
-          f"MAPE {d['err'].mean()*100:.1f} % | couverture {d['dans'].mean()*100:.1f} %")
+          f"MAPE {d['err'].mean()*100:.1f} % | err. mediane {d['err'].median()*100:.1f} % | "
+          f"couverture {d['dans'].mean()*100:.1f} %")
 if total_tests > 0:
     print("-" * 90)
     print(f"{'TOTAL':12s} : {total_ok} OK / {total_tests-total_ok} hors marge sur {total_tests} "
