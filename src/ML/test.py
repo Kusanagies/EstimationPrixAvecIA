@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 # Import de la fonction d'estimation
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from estimer_catboost import estimer
+from estimer import estimer
 
 MARGE = 0.20        # marge de reference (20%)
 ANNEE_TEST = 2025   # on ne teste que sur cette annee

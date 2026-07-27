@@ -97,6 +97,14 @@ FA['taux_credit']      = demander("Taux de credit immobilier ?", False)
 FA['taux_inflation']   = demander("Taux d'inflation ?", False)
 FA['pib']              = demander("PIB national ?", False)
 
+# Mode de split train/test
+print("\n--- Mode de decoupage train/test ---")
+print("  1 = Aleatoire 70/30 (melange toutes les annees)")
+print("  2 = Temporel (train < 2025, test = 2025)")
+_choix_split = input("  Choix (1/2, defaut 1) : ").strip()
+MODE_SPLIT = 'temporel' if _choix_split == '2' else 'aleatoire'
+print(f"  -> Split {MODE_SPLIT}")
+
 departement = input("\nDepartement (ex: 34, 75) ou 'FRANCE' : ").strip().upper()
 if len(departement) < 2:
     print("Format invalide."); sys.exit()
@@ -135,7 +143,8 @@ maisons = pd.read_sql(f"""
            nb_dependances,
            valeur_fonciere,
            YEAR(date) AS annee_vente,
-           MONTH(date) AS mois_vente
+           MONTH(date) AS mois_vente,
+           DAY(date) AS jour_vente
     FROM synthese
     WHERE {filtre_dvf}
       AND surface > 9 AND prix_m2 > 0 AND nb_pieces > 0
@@ -390,14 +399,19 @@ for type_bien, df_bien in datasets.items():
     X = df_bien[features_base].copy()
     y = df_bien['log_prix_total']
 
-    annee_max = df_bien['annee_vente'].max()
-    train_mask = df_bien['annee_vente'] < annee_max
-    test_mask = df_bien['annee_vente'] == annee_max
-    if train_mask.sum()==0 or test_mask.sum()==0:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    if MODE_SPLIT == 'aleatoire':
+        # Split aleatoire 70/30 (melange toutes les annees)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)
     else:
-        X_train, y_train = X[train_mask], y[train_mask]
-        X_test, y_test = X[test_mask], y[test_mask]
+        # Split temporel : train < derniere annee, test = derniere annee
+        annee_max = df_bien['annee_vente'].max()
+        train_mask = df_bien['annee_vente'] < annee_max
+        test_mask = df_bien['annee_vente'] == annee_max
+        if train_mask.sum()==0 or test_mask.sum()==0:
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+        else:
+            X_train, y_train = X[train_mask], y[train_mask]
+            X_test, y_test = X[test_mask], y[test_mask]
 
     coords_train = np.deg2rad(df_bien.loc[X_train.index, ['latitude','longitude']])
     arbre_v = BallTree(coords_train, metric='haversine')
@@ -467,12 +481,17 @@ for type_bien, df_bien in datasets.items():
     features_finales = list(dict.fromkeys(features_finales))
     X_train = X_train[features_finales]; X_test = X_test[features_finales]
 
-    mask_val = (annees_train == annees_train.max()).values
-    if mask_val.sum() < 50 or (~mask_val).sum() < 200:
+    if MODE_SPLIT == 'aleatoire':
+        # Validation interne aleatoire pour l'early stopping
         X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
     else:
-        X_tr, y_tr = X_train[~mask_val], y_train[~mask_val]
-        X_val, y_val = X_train[mask_val], y_train[mask_val]
+        # Validation = derniere annee du train (coherent avec le split temporel)
+        mask_val = (annees_train == annees_train.max()).values
+        if mask_val.sum() < 50 or (~mask_val).sum() < 200:
+            X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
+        else:
+            X_tr, y_tr = X_train[~mask_val], y_train[~mask_val]
+            X_val, y_val = X_train[mask_val], y_train[mask_val]
 
     modeles_q = {}
     for nom_q, alpha in {'bas':0.025,'median':0.50,'haut':0.975}.items():

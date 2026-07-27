@@ -87,6 +87,14 @@ FA['taux_credit']      = demander("Taux de credit immobilier ?", False)
 FA['taux_inflation']   = demander("Taux d'inflation ?", False)
 FA['pib']              = demander("PIB national ?", False)
 
+# Mode de split train/test
+print("\n--- Mode de decoupage train/test ---")
+print("  1 = Aleatoire 70/30 (melange toutes les annees)")
+print("  2 = Temporel (train < derniere annee, test = derniere annee)")
+_choix_split = input("  Choix (1/2, defaut 1) : ").strip()
+MODE_SPLIT = 'temporel' if _choix_split == '2' else 'aleatoire'
+print(f"  -> Split {MODE_SPLIT}")
+
 departement = input("\nVeuillez saisir le numero du departement (ex: 34, 75) ou 'FRANCE' : ").strip().upper()
 
 if len(departement) < 2:
@@ -169,7 +177,7 @@ print("Etape 1/4 : Extraction des donnees depuis SQL...")
 maisons = pd.read_sql(f"""
     SELECT code_commune, id_parcelle, latitude, longitude, (valeur_fonciere / surface_reelle_bati) AS prix_m2,
            surface_reelle_bati, type_local, nombre_pieces_principales,
-           surface_terrain, YEAR(date_mutation) AS annee_vente, MONTH(date_mutation) AS mois_vente
+           surface_terrain, YEAR(date_mutation) AS annee_vente, MONTH(date_mutation) AS mois_vente,DAY(date_mutation) as jour_vente
     FROM valeurs_foncieres
     WHERE latitude IS NOT NULL AND surface_reelle_bati > 9
         AND nature_mutation = 'Vente' AND nombre_lots <= 3 AND nombre_pieces_principales > 0
@@ -474,23 +482,28 @@ for type_bien, df_bien in datasets.items():
     y = df_bien['log_prix_total']
 
     annee_max = df_bien['annee_vente'].max()
-    train_mask = df_bien['annee_vente'] < annee_max
-    test_mask = df_bien['annee_vente'] == annee_max
 
-    if train_mask.sum() == 0 or test_mask.sum() == 0:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    if MODE_SPLIT == 'aleatoire':
+        # Split aleatoire 70/30 (melange toutes les annees)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)
     else:
-        X_train, y_train = X[train_mask], y[train_mask]
-        X_test, y_test = X[test_mask], y[test_mask]
+        # Split temporel : train < derniere annee, test = derniere annee
+        train_mask = df_bien['annee_vente'] < annee_max
+        test_mask = df_bien['annee_vente'] == annee_max
+        if train_mask.sum() == 0 or test_mask.sum() == 0:
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+        else:
+            X_train, y_train = X[train_mask], y[train_mask]
+            X_test, y_test = X[test_mask], y[test_mask]
 
     if type_bien == 'appartements':
         print(f"\n=== DIAGNOSTIC APPARTEMENTS (correlation_cat) ===")
+        print(f"Mode de split : {MODE_SPLIT}")
         print(f"Nombre total apparts : {len(df_bien)}")
         print(f"Train = {len(X_train)} | Test : {len(X_test)}")
-        print(f"Anne de test : {annee_max}")
         print(f"Prix m2 - Median : {df_bien['prix_m2'].median():.0f}")
         print(f"Annees train : {sorted(df_bien.loc[X_train.index, 'annee_vente'].unique())}")
-        print(f"Annee test : {sorted(df_bien.loc[X_test.index,'annee_vente'].unique())}")
+        print(f"Annees test : {sorted(df_bien.loc[X_test.index,'annee_vente'].unique())}")
 
     coords_train = np.deg2rad(df_bien.loc[X_train.index, ['latitude', 'longitude']])
     arbre_voisins = BallTree(coords_train, metric='haversine')
@@ -590,12 +603,17 @@ for type_bien, df_bien in datasets.items():
     # ==========================================
     # MODELE CATBOOST
     # ==========================================
-    mask_val = (annees_train_serie == annees_train_serie.max()).values
-    if mask_val.sum() < 50 or (~mask_val).sum() < 200:
-        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
+    if MODE_SPLIT == 'aleatoire':
+        # Validation interne aleatoire pour l'early stopping
+        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
     else:
-        X_tr, y_tr = X_train[~mask_val], y_train[~mask_val]
-        X_val, y_val = X_train[mask_val], y_train[mask_val]
+        # Validation = derniere annee du train (coherent avec le split temporel)
+        mask_val = (annees_train_serie == annees_train_serie.max()).values
+        if mask_val.sum() < 50 or (~mask_val).sum() < 200:
+            X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
+        else:
+            X_tr, y_tr = X_train[~mask_val], y_train[~mask_val]
+            X_val, y_val = X_train[mask_val], y_train[mask_val]
 
     quantiles = {'bas':0.025,'median':0.50,'haut':0.975}
     modeles_q = {}
