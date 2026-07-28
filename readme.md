@@ -86,6 +86,7 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 | `referentiel_communes` | [Référentiel géographique français (communes, aires urbaines...)](https://www.data.gouv.fr/datasets/referentiel-geographique-francais-communes-unites-urbaines-aires-urbaines-departements-academies-regions-1) | Aires d'attraction des villes → potentiel urbain | Poids d'un pôle = nombre de communes de son aire |
 | `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | **En cours d'évaluation** — varie géographiquement (voir note ci-dessous) |
+| `densite_population` | [Densité de population (INSEE)](https://www.data.gouv.fr/datasets/densite-de-population-1) | Densité communale (hab/km²) | Testée puis écartée sur mono-département (voir sources écartées) |
 
 ### Sources testées mais écartées
 
@@ -123,6 +124,20 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
   temporelle — il ne peut pas discriminer les biens entre eux. Écarté. *(Un PIB
   régional ou par habitant, qui distinguerait les territoires, serait en revanche
   potentiellement intéressant — comme l'est déjà le revenu médian communal.)*
+- **Inflation, testée sous trois formes** : glissante (12 mois, corr. +0,49 avec
+  l'année), instantanée (variation mensuelle, corr. −0,06), et cumulée en indice de
+  prix / déflateur (corr. +0,92). **Aucune n'améliore le modèle** (gains de +0,0005
+  à +0,0010 de RMSLE, soit une légère dégradation). Enseignement : une feature utile
+  doit être à la fois *non redondante avec l'année* ET *corrélée au prix*. L'indice
+  cumulé est redondant (0,92) ; l'instantanée est non redondante mais sans lien avec
+  le prix immobilier (bruit). L'inflation générale ne prédit pas le prix immobilier,
+  quel que soit son encodage. *Écartée définitivement.*
+- **Densité de population communale** (INSEE, habitants/km²) : testée sur le
+  département 34 (ajoutée à la baseline). **Gain quasi nul (+0,0012 de RMSLE)**.
+  Sur un seul département, la localisation (lat/lon) capture déjà l'effet urbain/rural,
+  rendant la densité redondante. *(Comme le chômage, son intérêt potentiel ne pourrait
+  se révéler qu'à l'échelle France entière, où elle distinguerait métropoles et zones
+  rurales sur tout le territoire. Non retenue à ce stade sur mono-département.)*
 - [Référentiel des arrêts — arrêts transporteur](https://www.data.gouv.fr/datasets/referentiel-des-arrets-arrets-transporteur)
 - [Dans ma rue — anomalies signalées](https://www.data.gouv.fr/datasets/dans-ma-rue-anomalies-signalees) (Paris)
 - [Les commerces par commune ou arrondissement — base permanente des équipements IDF](https://www.data.gouv.fr/datasets/les-commerces-par-commune-ou-arrondissement-base-permanente-des-equipements-idf) (Île-de-France)
@@ -250,6 +265,53 @@ répond à un choix concret rencontré pendant le développement.
 - Les voisinages sont calculés **entre biens du même type** (un appartement est
   comparé aux appartements voisins, pas aux maisons).
 - **Règle d'or** : toute feature dérivée des prix est calculée **sur le train uniquement**, pour éviter le *data leakage*.
+
+### Phase 4bis — Exploration systématique de l'apport des features
+
+Un script d'analyse d'impact (`impact_features.py`) mesure la contribution de chaque
+groupe de features ajouté **individuellement à la baseline** (lat/lon + surface + date).
+Résultats mesurés sur le département 34 (split aléatoire, cible prix total) :
+
+- **Contributeurs majeurs** : `prix_m2_voisins` (gain ~0,022 de RMSLE), `terrain`
+  (~0,041 pour les maisons, 0 pour les appartements — logique, cohérence validée),
+  `prix_m2_section` (~0,009).
+- **Contributeurs modestes** : distance littoral, distance transport, densité de ventes,
+  potentiel urbain, distance hôpital (~0,003 chacun).
+- **Apport quasi nul** : revenus, densité de population, pièces, chauffage, DPE,
+  dérivées de surface (~0,001 ou moins).
+- **Nuisibles (gain négatif)** : PIB, chômage, taux de crédit, taux d'inflation.
+
+**Enseignement clé** : la baseline contenant déjà `lat/lon`, CatBoost reconstruit une
+grande partie de la valeur locale à partir des seules coordonnées. Les features élaborées
+n'ajoutent donc qu'un apport *marginal* par-dessus (elles restent importantes dans le
+modèle complet — SHAP élevé — mais partiellement redondantes avec la localisation brute).
+*Plus le modèle est puissant, moins le feature engineering sophistiqué apporte au-delà
+des features de base bien choisies.*
+
+### Phase 4ter — Exploration de la dimension temporelle
+
+La dimension temps a été explorée en profondeur pour chercher un meilleur encodage que
+`annee_vente` + `mois_vente`. **Toutes les alternatives testées se sont révélées
+équivalentes ou inférieures** :
+
+- **Variables économiques en remplacement de la date** (taux de crédit, inflation) :
+  testées en split aléatoire ET en généralisation (train < 2025, test = 2025 non vu).
+  La date reste meilleure dans les deux cas (écart +0,014 de RMSLE en généralisation
+  sur les appartements). L'hypothèse « les variables causales généralisent mieux » est
+  *réfutée par la mesure* : ces variables sont trop faiblement corrélées au prix, et
+  l'année extrapole bien vers une année adjacente.
+- **Encodages alternatifs** (date décimale, mois cyclique sin/cos, mois écoulés, indice
+  de marché) : tous équivalents à `annee + mois`. Les arbres captent le temps brut aussi
+  bien que les transformations, contrairement aux modèles linéaires.
+- **Features temporelles enrichies** (saisonnalité, volume de marché, dynamique locale
+  récente calculée sans leakage) : aucune ne bat la référence. La dynamique locale est
+  redondante avec la combinaison lat/lon + année.
+- **Inflation sous trois formes** (glissante, instantanée, indice cumulé) : aucun apport
+  — voir « Sources testées mais écartées ».
+
+*Conclusion : `annee_vente` + `mois_vente` est l'encodage optimal du temps pour ce
+modèle. La dimension temporelle apporte un vrai signal (~0,04-0,05 de RMSLE vs sans
+temps), mais son encodage brut suffit.*
 
 ### Phase 5 — Stratégie de validation
 

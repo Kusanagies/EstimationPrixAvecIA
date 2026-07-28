@@ -87,6 +87,13 @@ dpe = pd.read_sql(f"""
     GROUP BY code_insee_ban;
 """, con=moteur_enr)
 revenus = pd.read_sql(f"SELECT code_commune, median_revenu_disponible, indice_gini, pct_minima_sociaux FROM demographie_communes WHERE LEFT(code_commune,2)='{departement}';", con=moteur_enr)
+densite_pop = pd.read_sql("""
+    SELECT d.code_commune, d.densite_population
+    FROM densite_population d
+    INNER JOIN (SELECT code_commune, MAX(annee) AS a FROM densite_population GROUP BY code_commune) m
+      ON d.code_commune = m.code_commune AND d.annee = m.a
+""", con=moteur_enr)
+densite_pop['densite_population'] = pd.to_numeric(densite_pop['densite_population'], errors='coerce')
 for c in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[c] = pd.to_numeric(revenus[c], errors='coerce')
 stations = pd.read_sql(f"SELECT latitude, longitude FROM donnees_transport WHERE latitude IS NOT NULL;", con=moteur_enr)
@@ -102,6 +109,7 @@ taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FR
 # ======= FUSION + DISTANCES (calculees une fois pour toutes) =======
 donnees = pd.merge(maisons_apparts, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+donnees = pd.merge(donnees, densite_pop, on='code_commune', how='left')
 
 # Jointures economiques (cles departement + trimestre pour le chomage)
 donnees['code_departement'] = donnees['code_commune'].str[:2]
@@ -175,6 +183,8 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
     donnees[col] = donnees[col].fillna(donnees[col].median())
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
+if 'densite_population' in donnees.columns:
+    donnees['densite_population'] = donnees['densite_population'].fillna(donnees['densite_population'].median())
 for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation']:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
@@ -213,6 +223,7 @@ CANDIDATES_SIMPLES = {
     'dist_universite': ['dist_universite_m', 'volume_etudiants_proche'],
     'dist_littoral':   ['dist_mer_m', 'dist_lac_m', 'dist_estuaire_m'],
     'potentiel_urbain':['potentiel_urbain'],
+    'densite_population':['densite_population'],
     # Features experimentales economiques (temporelles - attendu : gain ~0 sur un seul dep)
     'chomage':         ['taux_chomage'],
     'taux_credit':     ['taux_credit_immo_fixe'],
