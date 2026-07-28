@@ -97,6 +97,7 @@ FA['chomage']          = demander("Taux de chomage departemental ?", False)
 FA['taux_credit']      = demander("Taux de credit immobilier ?", False)
 FA['taux_inflation']   = demander("Taux d'inflation ?", False)
 FA['pib']              = demander("PIB national ?", False)
+FA['ipc']              = demander("Indice prix conso (IPC : niveau + variation) ?", False)
 
 # Mode de split train/test
 print("\n--- Mode de decoupage train/test ---")
@@ -249,6 +250,13 @@ if FA['chomage']:
 taux = None
 if FA['taux_credit'] or FA['taux_inflation']:
     taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FROM taux_macro", con=moteur_enr)
+ipc = None
+if FA['ipc']:
+    ipc = pd.read_sql("SELECT annee, mois, indice_prix_conso FROM indice_prix_conso", con=moteur_enr)
+    ipc['indice_prix_conso'] = pd.to_numeric(ipc['indice_prix_conso'], errors='coerce')
+    ipc = ipc.sort_values(['annee','mois']).reset_index(drop=True)
+    # Inflation INSTANTANEE exacte : variation de l'IPC d'un mois a l'autre (%)
+    ipc['inflation_mensuelle'] = ipc['indice_prix_conso'].pct_change().fillna(0) * 100
 
 # ==========================================
 # 2. FUSION ET DISTANCES
@@ -269,6 +277,9 @@ if chomage is not None:
 if taux is not None:
     donnees = pd.merge(donnees, taux, left_on=['annee_vente','mois_vente'],
                        right_on=['annee','mois'], how='left').drop(columns=['annee','mois'], errors='ignore')
+if ipc is not None:
+    donnees = pd.merge(donnees, ipc[['annee','mois','indice_prix_conso','inflation_mensuelle']],
+                       left_on=['annee_vente','mois_vente'], right_on=['annee','mois'], how='left').drop(columns=['annee','mois'], errors='ignore')
 
 RAYON = 6371000
 points_rad = np.deg2rad(donnees[['latitude','longitude']])
@@ -328,7 +339,7 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
-for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation','potentiel_urbain','densite_population']:
+for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation','potentiel_urbain','densite_population','indice_prix_conso','inflation_mensuelle']:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
@@ -363,6 +374,7 @@ def construire_features_base():
     if FA['dist_universite']: f += ['dist_universite_m']
     if FA['dist_littoral']:   f += ['dist_mer_m','dist_lac_m','dist_estuaire_m']
     if FA['pib'] and 'pib_national' in dp.columns: f += ['pib_national']
+    if FA['ipc'] and 'indice_prix_conso' in dp.columns: f += ['indice_prix_conso', 'inflation_mensuelle']
     if FA['chomage'] and 'taux_chomage' in dp.columns: f += ['taux_chomage']
     if FA['taux_credit'] and 'taux_credit_immo_fixe' in dp.columns: f += ['taux_credit_immo_fixe']
     if FA['taux_inflation'] and 'taux_inflation' in dp.columns: f += ['taux_inflation']
@@ -542,8 +554,8 @@ for type_bien, df_bien in datasets.items():
     print(f"SHAP {type_bien}...")
     shap_vals = shap.TreeExplainer(modele).shap_values(X_test)
     imp = pd.Series(np.abs(shap_vals).mean(axis=0), index=X_test.columns).sort_values(ascending=False)
-    print(f"Top 10 SHAP ({type_bien}) :")
-    for nom, val in imp.head(10).items():
+    print(f"Top 5 SHAP ({type_bien}) :")
+    for nom, val in imp.head(5).items():
         print(f"  - {nom.ljust(25)} : {val:.4f}")
 
     base = f"{nom_zone.replace(' ','_')}_{type_bien}_synthese"
