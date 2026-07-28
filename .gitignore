@@ -10,3 +10,4 @@ src/ML/CAT/catboost_info
 src/ML/__pycache__
 src/script/catboost_info
 src/ML/CAT/__pycache__
+src/script/test/catboost_info
