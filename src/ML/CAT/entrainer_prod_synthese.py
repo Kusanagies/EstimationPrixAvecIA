@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 import geopandas as gpd
 
 # ==========================================
-# 0. CHOIX DES FEATURES
+# 0. CHOIX DES FEATURES ET DU SPLIT
 # ==========================================
 def demander(question, defaut=True):
     ind = "O/n" if defaut else "o/N"
@@ -66,6 +66,13 @@ FA['chomage']          = demander("Taux de chomage departemental ?", False)
 FA['taux_credit']      = demander("Taux de credit immobilier ?", False)
 FA['taux_inflation']   = demander("Taux d'inflation ?", False)
 FA['pib']              = demander("PIB national ?", False)
+
+print("\n--- Mode de decoupage pour la validation (Early Stopping) ---")
+print("  1 = Aleatoire 70/30 (melange toutes les annees)")
+print("  2 = Temporel (train < derniere annee, validation = derniere annee)")
+_choix_split = input("  Choix (1/2, defaut 1) : ").strip()
+MODE_SPLIT = 'temporel' if _choix_split == '2' else 'aleatoire'
+print(f"  -> Split de validation : {MODE_SPLIT}")
 
 # ==========================================
 # 1. CONNEXIONS ET ZONE
@@ -412,7 +419,23 @@ for type_bien, df_bien in datasets.items():
     X = X[features_finales]
 
     print("  -> Entrainement des modeles quantiles...")
-    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Application du choix de split pour l'Early Stopping (Validation)
+    if MODE_SPLIT == 'aleatoire':
+        X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
+    else:
+        annees = df_bien.loc[X.index, 'annee_vente']
+        annee_max = annees.max()
+        mask_val = (annees == annee_max).values
+        
+        # Securite si trop peu de donnees sur la derniere annee
+        if mask_val.sum() < 50 or (~mask_val).sum() < 200:
+            print(f"     * Pas assez de donnees pour split temporel (Train: {(~mask_val).sum()}, Val: {mask_val.sum()}), repli sur aleatoire.")
+            X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
+        else:
+            X_tr, y_tr = X[~mask_val], y[~mask_val]
+            X_val, y_val = X[mask_val], y[mask_val]
+
     modeles = {}
     for nom, alpha in {'bas':0.025,'median':0.50,'haut':0.975}.items():
         m = CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}', iterations=1000,

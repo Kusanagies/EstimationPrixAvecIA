@@ -73,7 +73,8 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 
 | Table (base de données) | Source | Rôle | Remarque |
 |---|---|---|---|
-| `valeurs_foncieres` | [Demandes de valeurs foncières (DVF)](https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres) | Cible : prix des ventes | Source principale (~20 M lignes) |
+| `synthese` (base `etalab_dvf`) | Base DVF relationnelle pré-traitée (Etalab) | **Source principale actuelle** : ventes pré-agrégées | ~9,4 M lignes, 2014-2025, propre (coords + prix_m2 déjà calculés) |
+| `valeurs_foncieres` | [Demandes de valeurs foncières (DVF)](https://www.data.gouv.fr/datasets/demandes-de-valeurs-foncieres) | Cible : prix des ventes | Source historique (~20 M lignes), remplacée par `synthese` |
 | `dpe_logements_france` | [DPE logements existants](https://www.data.gouv.fr/datasets/dpe-logements-existants-depuis-juillet-2021) | Profil énergétique par commune | Depuis juillet 2021 |
 | `donnees-revenus-filosofi` | [Revenu des Français à la commune](https://www.data.gouv.fr/datasets/revenu-des-francais-a-la-commune) | Revenu médian, Gini, minima sociaux | **Données 2021** |
 | `adresses_ban` | [Base Adresse Nationale](https://www.data.gouv.fr/datasets/base-adresse-nationale) | Géocodage | Non exploitée dans le pipeline actuel |
@@ -84,8 +85,7 @@ Toutes les données proviennent de [data.gouv.fr](https://www.data.gouv.fr).
 | `infrastructures_mairies` | [Annuaire de l'administration (service-public.gouv.fr)](https://www.data.gouv.fr/datasets/lannuaire-de-ladministration-base-de-donnees-locales) | Distance à la mairie (proxy centre-ville) | Filtré sur `type_service_local = mairie` ; ~35 000 communes |
 | `TableGeo2022.gpkg` (fichier local) | [Communes de la loi Littoral au COG 2020-2022](https://www.data.gouv.fr/datasets/communes-de-la-loi-littoral-au-code-officiel-geographique-cog-2020-2022) | Distance à la mer / lac / estuaire | Colonne `CLASSEMENT` (Mer/Lac/Estuaire) ; features décisives en zone côtière |
 | `referentiel_communes` | [Référentiel géographique français (communes, aires urbaines...)](https://www.data.gouv.fr/datasets/referentiel-geographique-francais-communes-unites-urbaines-aires-urbaines-departements-academies-regions-1) | Aires d'attraction des villes → potentiel urbain | Poids d'un pôle = nombre de communes de son aire |
-| `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | varie géographiquement (voir note ci-dessous) |
-| `taux_macro` | [Taux d'intéret immobilie fixe (Banque de France)](https://webstat.banque-france.fr/fr/recherche/resultats/?q=Taux%20d%27int%C3%A9ret) | Taux d'intéret pour les entreprises et particulier(fixe et variable) | 
+| `chomage_departements` | [Taux de chômage localisé (INSEE)](https://www.insee.fr/fr/statistiques/serie/001515842) | Taux de chômage par département et trimestre | **En cours d'évaluation** — varie géographiquement (voir note ci-dessous) |
 
 ### Sources testées mais écartées
 
@@ -181,6 +181,20 @@ Le projet sépare volontairement plusieurs rôles distincts :
 Les décisions sont présentées dans l'ordre logique de construction. Chacune
 répond à un choix concret rencontré pendant le développement.
 
+### Phase 0bis — Migration vers la base `synthese` (Etalab)
+
+- Basculement de `valeurs_foncieres` (DVF brut, ~20 M lignes) vers `etalab_dvf.synthese`,
+  base relationnelle pré-traitée par l'organisation : ~9,4 M lignes, 2014-2025, coordonnées
+  et prix/m² déjà calculés, une ligne par bien.
+- **Investigation avant migration** : exploration comparée (volume, couverture temporelle,
+  complétude), et analyse de la gestion des ventes multi-biens. `synthese` démultiplexe déjà
+  les ventes complexes (ratio ~1 ligne/vente) → **le filtre `nombre_lots` devient inutile**
+  (test A/B/C : configs « brut » et « dépendances ≤ 3 » identiques, config stricte dégrade).
+- **Deux connexions** : les ventes viennent de `etalab_dvf`, les enrichissements
+  (DPE, revenus, infrastructures) restent dans `EstimationIA`.
+- Conversions `pd.to_numeric` obligatoires (colonnes int nullable lues en `object`) ;
+  mapping des colonnes (`lat`/`lng`, `typebien`, `communes_code`, `parcelles_code`).
+
 ### Phase 0 — Préparation des données
 
 - Rassembler et joindre les sources hétérogènes (ventes, énergie, socio-économique, géographie).
@@ -190,19 +204,22 @@ répond à un choix concret rencontré pendant le développement.
 
 ### Phase 1 — Cadrage du problème
 
-- Prédire le **prix au m²** (et non le prix total).
+- Prédire le **prix total** (euros) — c'est ce que veut l'utilisateur final. *(Le projet
+  prédisait initialement le prix/m² ; un test A/B a montré que les deux cibles sont
+  équivalentes en performance avec des arbres boostés — voir Phase 8.)*
 - Appliquer une transformation **logarithmique** au prix pour gérer son asymétrie.
 - **Séparer les modèles Maisons et Appartements** : leurs distributions de prix et
   leurs facteurs de valeur diffèrent trop pour un modèle unique.
 
 ### Phase 2 — Nettoyage et filtrage des aberrations
 
-- Ne garder que les ventes **à trois lots maximum** (`nombre_lots <= 3`). Les ventes à 2 lots sont majoritairement un bien + sa dépendance directe (cave, parking), au prix/m² cohérent : les inclure récupère ~30 % de données supplémentaires sur les appartements et fait baisser le MAE de ~11 %, sans dégrader la couverture. *Décision testée et validée par la mesure sur le département 34.*
+- *Historique (base DVF brute)* : ne garder que les ventes **à trois lots maximum** (`nombre_lots <= 3`). Les ventes à 2 lots sont majoritairement un bien + sa dépendance directe, au prix/m² cohérent : les inclure récupère ~30 % de données supplémentaires sur les appartements et fait baisser le MAE de ~11 %. *Décision testée sur le 34.* **Devenu inutile avec `synthese`** (déjà démultiplexée — voir Phase 0bis).
 - Limiter aux types `Maison` et `Appartement`.
-- Borner le prix au m² pour couper les artefacts de calcul (faux prix à ~24 000 €/m²).
-- Filtrer les aberrations de prix **par type de bien** : maisons et appartements
-  ayant des distributions différentes, des bornes calculées sur l'ensemble mélangé
-  dégradaient le nettoyage. *Leçon : filtrer chaque population avec ses propres bornes.*
+- Borner le prix au m² par **quantiles 0,01 / 0,99 par type de bien** : maisons et
+  appartements ayant des distributions différentes, des bornes calculées sur l'ensemble
+  mélangé dégradaient le nettoyage. *Leçon : filtrer chaque population avec ses propres bornes.*
+- Ajouter un **filtre de cohérence marché** (ratio prix/médiane communale 0,40-2,50) pour
+  éliminer les transactions hors marché résiduelles — voir Phase 8bis.
 - Corriger un biais DVF : la `surface_terrain` des appartements (parcelle de la
   copropriété entière) est forcée à 0.
 
@@ -236,7 +253,13 @@ répond à un choix concret rencontré pendant le développement.
 
 ### Phase 5 — Stratégie de validation
 
-- Adopter un **split temporel** (entraîner sur le passé, tester sur l'année récente) plutôt qu'un split aléatoire, car il reflète l'usage réel — prédire des biens futurs. *Décision la plus importante du projet.*
+- Le **split est paramétrable** au lancement : aléatoire 70/30 (mélange toutes les
+  années) ou temporel (train < dernière année, test = dernière année).
+- Le **split temporel** reflète l'usage réel (prédire des biens futurs à partir de
+  l'historique) et donne une mesure de généralisation honnête ; le **split aléatoire**
+  donne des métriques mécaniquement meilleures car le modèle connaît déjà le niveau de
+  prix de chaque année. *Le choix du split est la décision la plus structurante pour
+  l'interprétation des chiffres.*
 - Ajouter une **cross-validation** pour mesurer la stabilité et détecter l'overfitting via l'écart train/validation.
 
 ### Phase 6 — Entraînement du modèle
@@ -265,8 +288,41 @@ répond à un choix concret rencontré pendant le développement.
 
 ### Phase 8 — Évaluation multi-métriques
 
-- Ne jamais juger sur un seul chiffre. Suivre : R² (log et euros), MAE, MAPE, RMSE, erreur médiane, et part des prédictions à ±10 % / ±20 %.
-- Comparer les métriques entre elles (RMSE vs MAE, médiane vs moyenne) pour diagnostiquer la nature des erreurs.
+- Ne jamais juger sur un seul chiffre. Suivre : R², MAE, MAPE, RMSE, **RMSLE**, erreur médiane, part des prédictions à ±10 % / ±20 % (PE10/PE20), et couverture de l'intervalle.
+- **Cible = prix total** (euros), pas prix/m². Un test A/B a montré que les deux cibles
+  donnent des résultats quasi identiques (RMSLE 0,2078 vs 0,2079) : les arbres boostés
+  reconstruisent la relation quelle que soit la cible, contrairement aux modèles linéaires.
+  Le prix total est retenu car c'est ce que veut l'utilisateur final. *Les features de prix
+  (voisins, section) restent en €/m² pour rester comparables entre biens ; seule la cible change.*
+- **RMSLE** comme métrique de référence : mesure l'erreur relative dans l'espace
+  logarithmique (cohérent avec la cible log), robuste aux prix extrêmes, pénalise davantage
+  la sous-estimation. Interprétation : `(exp(RMSLE) − 1) × 100` ≈ % d'erreur relative typique.
+- Comparer les métriques entre elles (RMSE vs MAE, médiane vs moyenne) pour diagnostiquer la
+  nature des erreurs : un écart médiane ≪ moyenne signale des aberrations résiduelles.
+- **MAPE trompeuse sur données non filtrées** : quelques ventes hors marché suffisent à la
+  faire exploser (moyenne sensible aux extrêmes), alors que le PE20 et l'erreur médiane restent stables.
+
+### Phase 8bis — Filtre de cohérence marché
+
+- Après le filtrage par quantiles départementaux, un **filtre de cohérence marché** compare
+  chaque bien au prix médian de **sa commune** (garde-fou : ≥ 10 ventes, sinon repli sur la
+  médiane départementale) et exclut les biens hors de la fourchette 40 %-250 % de cette référence.
+- Élimine les transactions hors marché (ventes familiales sous-évaluées, parts indivises,
+  nue-propriété) que les quantiles laissent passer. Retire ~3-5 % des biens.
+- **Effet mesuré** (dép. 34) : kurtosis des erreurs log divisé par ~3 (de ~5 à ~1,7), RMSLE
+  en baisse (~−15 %), MAPE assainie, biais de sous-estimation réduit. Appliqué de façon
+  identique à l'entraînement, l'évaluation et le test pour la cohérence de la chaîne.
+
+### Phase 8ter — Analyse de normalité des erreurs
+
+- Vérification que les erreurs dans l'espace log suivent (approximativement) une **loi normale** :
+  histogramme + courbe théorique, QQ-plot, et vérification empirique de la règle 68-95-99.7.
+- Si les erreurs log sont normales, le **RMSLE s'interprète comme l'écart-type** : ~68 % des
+  biens dans ±1 RMSLE, ~95 % dans ±2 RMSLE.
+- **Résultat mesuré** : après filtre de cohérence marché, les erreurs sont *quasi-normales*
+  avec de légères queues épaisses résiduelles (kurtosis ~1,7-2,2 ; ~74 % dans ±1σ, ~94 % dans ±2σ).
+  Les queues restantes reflètent les biens atypiques irréductibles (haut de gamme, facteurs
+  individuels absents de DVF). *Le kurtosis résiduel explique la MAPE parfois élevée sur données brutes.*
 
 ### Phase 9 — Interprétation et diagnostic
 
@@ -297,7 +353,7 @@ répond à un choix concret rencontré pendant le développement.
 
 ## Limites connues et pistes d'amélioration
 
-- **`prix_m2_section` en production** : l'API d'adresse ne fournit pas la parcelle cadastrale, donc cette feature (parmi les plus importantes) est dégradée en médiane communale. Piste : récupérer la vraie section via l'API Carto de l'IGN.
+- **`prix_m2_section` en production** : l'API d'adresse ne fournit pas la parcelle cadastrale, donc cette feature (parmi les plus importantes) est dégradée en médiane communale. Pistes : récupérer la vraie section via l'API Carto de l'IGN, ou exploiter le **`geo_iris_id`** désormais disponible dans `synthese` (maille IRIS infra-communale, plus fine que la commune).
 - **Données individuelles manquantes** : DVF ne contient ni l'état du bien, ni l'étage, ni la vue — facteurs décisifs absents. Le haut de gamme (> 8000 €/m²) reste donc mal prédit, et la fourchette est large sur les appartements.
 - **DPE communal et non individuel** : l'appariement DPE↔vente n'atteignait que ~6 %, le profil énergétique est donc agrégé par commune.
 - **Revenus INSEE datés de 2021** : à mettre à jour si un millésime plus récent devient disponible.
