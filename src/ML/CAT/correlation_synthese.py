@@ -80,6 +80,7 @@ print("\n--- Enrichissements communaux ---")
 FA['dpe']         = demander("Profil DPE ?", True)
 FA['chauffage']   = demander("Profil chauffage ?", True)
 FA['revenus']     = demander("Revenus / Gini / minima ?", True)
+FA['densite_pop'] = demander("Densite de population ?", True)
 print("\n--- Distances ---")
 FA['dist_transport']  = demander("Distance gare ?", True)
 FA['dist_monument']   = demander("Distance monument ?", True)
@@ -143,8 +144,7 @@ maisons = pd.read_sql(f"""
            nb_dependances,
            valeur_fonciere,
            YEAR(date) AS annee_vente,
-           MONTH(date) AS mois_vente,
-           DAY(date) AS jour_vente
+           MONTH(date) AS mois_vente
     FROM synthese
     WHERE {filtre_dvf}
       AND surface > 9 AND prix_m2 > 0 AND nb_pieces > 0
@@ -205,6 +205,15 @@ universites = pd.read_sql(q_uni, con=moteur_enr)
 
 filtre_rev = "1=1" if dep_infra == 'FRANCE' else f"LEFT(code_commune,2)='{dep_infra}'"
 revenus = pd.read_sql(f"SELECT code_commune, median_revenu_disponible, indice_gini, pct_minima_sociaux FROM demographie_communes WHERE {filtre_rev};", con=moteur_enr)
+
+# Densite de population par commune (valeur la plus recente ; quasi statique)
+densite_pop = pd.read_sql("""
+    SELECT d.code_commune, d.densite_population
+    FROM densite_population d
+    INNER JOIN (SELECT code_commune, MAX(annee) AS a FROM densite_population GROUP BY code_commune) m
+      ON d.code_commune = m.code_commune AND d.annee = m.a
+""", con=moteur_enr)
+densite_pop['densite_population'] = pd.to_numeric(densite_pop['densite_population'], errors='coerce')
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col], errors='coerce')
 
@@ -247,6 +256,7 @@ if FA['taux_credit'] or FA['taux_inflation']:
 print("Etape 2/4 : Fusion et distances...")
 donnees = pd.merge(maisons, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+donnees = pd.merge(donnees, densite_pop, on='code_commune', how='left')
 
 donnees['code_departement'] = donnees['code_commune'].str[:2]
 donnees['trimestre'] = (donnees['mois_vente'] - 1) // 3 + 1
@@ -318,7 +328,7 @@ for col in colonnes_dpe + colonnes_chauffage + colonnes_revenus:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0)
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
-for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation','potentiel_urbain']:
+for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation','potentiel_urbain','densite_population']:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
@@ -343,6 +353,7 @@ def construire_features_base():
     if FA['surface']:    f += ['surface_reelle_bati','log_surface','surface_par_piece']
     if FA['dist_universite']: f += ['volume_etudiants_proche']
     if FA['revenus']:    f += colonnes_revenus
+    if FA['densite_pop'] and 'densite_population' in donnees.columns: f += ['densite_population']
     if FA['potentiel_urbain'] and 'potentiel_urbain' in dp.columns: f += ['potentiel_urbain']
     if FA['dpe']:        f += colonnes_dpe
     if FA['chauffage']:  f += colonnes_chauffage
@@ -483,7 +494,7 @@ for type_bien, df_bien in datasets.items():
 
     if MODE_SPLIT == 'aleatoire':
         # Validation interne aleatoire pour l'early stopping
-        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
+        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
     else:
         # Validation = derniere annee du train (coherent avec le split temporel)
         mask_val = (annees_train == annees_train.max()).values
@@ -531,8 +542,8 @@ for type_bien, df_bien in datasets.items():
     print(f"SHAP {type_bien}...")
     shap_vals = shap.TreeExplainer(modele).shap_values(X_test)
     imp = pd.Series(np.abs(shap_vals).mean(axis=0), index=X_test.columns).sort_values(ascending=False)
-    print(f"Top 5 SHAP ({type_bien}) :")
-    for nom, val in imp.head(5).items():
+    print(f"Top 10 SHAP ({type_bien}) :")
+    for nom, val in imp.head(10).items():
         print(f"  - {nom.ljust(25)} : {val:.4f}")
 
     base = f"{nom_zone.replace(' ','_')}_{type_bien}_synthese"
