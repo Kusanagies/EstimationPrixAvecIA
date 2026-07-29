@@ -178,6 +178,20 @@ Le projet sépare volontairement plusieurs rôles distincts :
   API REST (FastAPI) et une page web simple.
 - **Analyse des erreurs** (`analyse_erreurs.py`) — recharge les résultats
   sauvegardés pour diagnostiquer les pires erreurs sans réentraîner.
+- **Diagnostic des résidus** (`analyse_residus.py`) — décompose l'erreur du modèle
+  par segments (gamme de prix, commune, année, surface, fiabilité de section) et
+  distingue imprécision et biais. Voir Phase 9.
+- **Inspection du décile bas** (`inspecter_d1.py`) — dissèque la composition des
+  biens les moins chers pour arbitrer entre artefacts à filtrer et biais structurel.
+- **Analyse d'impact des features** (`impact_features.py`) — outil multi-modes :
+  impact sur baseline, ablation, sélection gloutonne (meilleure combinaison pas à
+  pas) et complémentarité entre deux features.
+- **Version modulaire du pipeline d'évaluation** — `correlation_synthese.py`
+  (monolithique) est aussi disponible sous forme modulaire : `correlation_synthese_modulaire.py`
+  (orchestrateur) s'appuie sur `eia_chargement.py` (connexions, extraction,
+  enrichissements, fusion), `eia_features.py` (features spatiales anti-leakage),
+  `eia_cross_validation.py` (CV sur le train) et `eia_metriques.py` (calcul et
+  rapport des métriques). Les deux versions produisent des résultats identiques.
 - **Matrice de corrélation** — analyse exploratoire des liens entre variables.
 
 ### Artefacts de production (`modele_production/`)
@@ -280,6 +294,19 @@ Résultats mesurés sur le département 34 (split aléatoire, cible prix total) 
 - **Apport quasi nul** : revenus, densité de population, pièces, chauffage, DPE,
   dérivées de surface (~0,001 ou moins).
 - **Nuisibles (gain négatif)** : PIB, chômage, taux de crédit, taux d'inflation.
+
+**Cas de l'IRIS** (`prix_m2_iris`, médiane de prix/m² à la maille IRIS
+infra-communale, calculée out-of-fold). Testée comme maille intermédiaire entre la
+commune et la section cadastrale. Apport isolé faible (+0,003 en moyenne, du même
+ordre que les distances) et **très probablement redondant avec `prix_m2_section`**
+qui capte déjà l'information de prix local à une maille plus fine. Conservée comme
+candidate dans l'outil de test mais **non intégrée au modèle de production**, par
+souci de parcimonie : on ne garde une feature que si elle prouve son utilité
+*marginale* (par-dessus les features déjà présentes), pas seulement son utilité
+isolée. L'outil `impact_features.py` propose d'ailleurs un mode de
+**complémentarité** pour arbitrer précisément ce type de cas (deux features
+sont-elles complémentaires ou redondantes ?), ainsi qu'un mode de **sélection
+gloutonne** qui construit la meilleure combinaison pas à pas.
 
 **Enseignement clé** : la baseline contenant déjà `lat/lon`, CatBoost reconstruit une
 grande partie de la valeur locale à partir des seules coordonnées. Les features élaborées
@@ -391,6 +418,53 @@ temps), mais son encodage brut suffit.*
 - Utiliser **SHAP** pour comprendre l'importance et la direction de chaque variable.
 - Analyser les **pires erreurs** (par commune, par tranche de prix) pour identifier les segments problématiques et les aberrations résiduelles.
 
+#### Analyse systématique des résidus (`analyse_residus.py`)
+
+Plutôt que de chercher à baisser le RMSLE à l'aveugle, on **décompose l'erreur du
+modèle par segments** pour savoir *où* il se trompe et *pourquoi*. Le script
+entraîne le modèle médian, calcule les résidus sur le test 30 %, et croise deux
+lectures : l'erreur **absolue** (où le modèle est imprécis) et l'erreur **signée**
+(où il est biaisé — sur- ou sous-estimation). Découpage par gamme de prix (déciles),
+taille de commune, année de vente, surface et fiabilité de la section.
+
+**Résultat principal — régression vers la moyenne sur les extrêmes de prix.** Le
+biais de prédiction varie de façon monotone et régulière avec la gamme de prix :
+sur les maisons (dép. 34), de **−37 %** sur le décile le moins cher (le modèle
+surestime fortement) à **+11 %** sur le plus cher (il sous-estime) ; même profil
+sur les appartements (−24 % à +9 %). C'est la signature classique d'un modèle qui
+« écrase » les valeurs extrêmes vers le centre pour minimiser l'erreur globale —
+un phénomène **structurel**, non corrigeable par l'ajout de features.
+
+**Les autres axes valident le pipeline.** Aucune autre poche d'erreur majeure :
+le biais est stable dans le temps (≈ −5 à −7 % sur toutes les années, ce qui
+**confirme la bonne gestion temporelle** et l'actualisation des prix), stable par
+taille de commune, et les sections peu fiables (1-3 ventes) ne pèsent que ~3 % de
+l'erreur. Il n'y a donc **qu'un seul front** : les extrêmes de prix (et de surface).
+
+#### Inspection du décile bas (`inspecter_d1.py`)
+
+Le décile le moins cher (D1) concentrant le plus fort biais, on en dissèque la
+composition pour trancher : biens atypiques à filtrer, ou vraies transactions
+mal prédites ? Verdict : **ce sont majoritairement de petites surfaces légitimes**
+(appartements dép. 34 : surface médiane 24 m² contre 48 pour le reste ; 63 % font
+moins de 30 m², 61 % sont des studios/1-pièce) dont le **ratio au marché est sain**
+(médiane 0,8 ; seulement 10 % sous 0,50). Autrement dit, D1 n'est **pas** un
+problème de données sales : le filtre de cohérence marché fait déjà bien son
+travail. Le biais provient du choix de la **cible prix total**, fortement corrélée
+à la surface : les studios sont aux extrêmes bas de cette distribution et subissent
+l'écrasement statistique. D1 (prix bas) et « surface < 30 m² » sont **le même
+segment** vu sous deux angles.
+
+**Décision : ne pas durcir le filtre de cohérence marché.** La simulation montre
+que remonter la borne basse de 0,40 à 0,50 jetterait 5,7 % des appartements sans
+cibler la cause (la petite surface, pas le prix/m²). Durcir reviendrait à supprimer
+des transactions valides — et à obtenir un modèle incapable d'estimer les biens
+bon marché, un vrai cas d'usage. Le bon critère n'est jamais « est-ce que ça baisse
+le RMSLE » (retirer les cas difficiles le baisse mécaniquement) mais « est-ce que
+je retire des artefacts ou des données valides ». Le biais résiduel sur les petits
+et grands biens est un comportement connu, également présent chez les outils
+professionnels ; il est **acté et documenté** plutôt que masqué par un sur-filtrage.
+
 ### Phase 10 — Mise en production
 
 - Séparer le fichier d'**évaluation** (qui mesure) du fichier de **production** (qui entraîne sur tout et sauvegarde).
@@ -409,14 +483,18 @@ temps), mais son encodage brut suffit.*
   drastiquement les requêtes.
 - **Tuning des hyperparamètres** : optimisation bayésienne (Optuna) sur la perte
   pinball du modèle médian ; les meilleurs réglages sont appliqués aux trois
-  quantiles (seul `alpha` change).
+  quantiles (seul `alpha` change). *Résultat mesuré : gain négligeable (~0,0001 de
+  RMSLE) — les hyperparamètres initiaux (depth 8, learning_rate 0,04, l2_leaf_reg 3)
+  étaient déjà bien choisis. L'optimisation est conservée comme démonstration de
+  bonne pratique, mais n'a pas modifié les réglages de production.*
 
 ---
 
 ## Limites connues et pistes d'amélioration
 
 - **`prix_m2_section` en production** : l'API d'adresse ne fournit pas la parcelle cadastrale, donc cette feature (parmi les plus importantes) est dégradée en médiane communale. Pistes : récupérer la vraie section via l'API Carto de l'IGN, ou exploiter le **`geo_iris_id`** désormais disponible dans `synthese` (maille IRIS infra-communale, plus fine que la commune).
-- **Données individuelles manquantes** : DVF ne contient ni l'état du bien, ni l'étage, ni la vue — facteurs décisifs absents. Le haut de gamme (> 8000 €/m²) reste donc mal prédit, et la fourchette est large sur les appartements.
+- **Régression vers la moyenne sur les extrêmes de prix** (biais structurel). Le modèle surestime les biens les moins chers (jusqu'à −37 % sur le décile bas des maisons) et sous-estime les plus chers (+11 % sur le décile haut) — voir Phase 9. Ce n'est ni un défaut de données ni un problème de filtrage : c'est une propriété du modèle, qui rapproche les valeurs extrêmes du centre pour minimiser l'erreur globale. Le bas de gamme correspond aux petites surfaces (studios), extrêmes de la distribution du prix total. Leviers possibles mais non retenus : passer la cible du prix total au prix/m² (chantier lourd, effets incertains sur le reste), ou pondérer les observations / changer de fonction de perte (gain incertain, complexité accrue). À ce stade, le modèle est considéré **à sa limite raisonnable** compte tenu des données publiques.
+- **Données individuelles manquantes** : DVF ne contient ni l'état du bien, ni l'étage, ni la vue — facteurs décisifs absents. Le haut de gamme (> 8000 €/m²) reste donc mal prédit, et la fourchette est large sur les appartements. Cette variance est **irréductible** avec les données publiques : deux biens identiques sur le papier peuvent valoir du simple au double selon leur état.
 - **DPE communal et non individuel** : l'appariement DPE↔vente n'atteignait que ~6 %, le profil énergétique est donc agrégé par commune.
 - **Revenus INSEE datés de 2021** : à mettre à jour si un millésime plus récent devient disponible.
 - **Pistes de features à plus fort potentiel** : vraie section cadastrale via
