@@ -52,6 +52,7 @@ if gdf_littoral.crs is not None and gdf_littoral.crs.to_epsg() != 4326:
 # ======= EXTRACTION VENTES =======
 maisons_apparts = pd.read_sql(f"""
     SELECT communes_code AS code_commune, parcelles_code AS id_parcelle,
+           geo_iris_id,
            lat AS latitude, lng AS longitude, prix_m2,
            surface AS surface_reelle_bati, typebien AS type_local,
            nb_pieces AS nombre_pieces_principales, surface_terrain,
@@ -200,6 +201,8 @@ dp['surface_par_piece'] = dp['surface_reelle_bati'] / dp['nombre_pieces_principa
 dp['a_terrain'] = (dp['surface_terrain']>0).astype(int)
 dp['log_terrain'] = np.log1p(dp['surface_terrain'])
 dp['code_section'] = dp['id_parcelle'].str[:10]
+# IRIS : identifiant en texte, NULL remplaces par une valeur sentinelle (repli commune)
+dp['geo_iris_id'] = dp['geo_iris_id'].astype('string').fillna('__NA__')
 
 # ======= DEFINITION BASELINE + FEATURES CANDIDATES =======
 # BASELINE (definition stricte) = localisation (lat/lon) + surface du BATI (sans terrain)
@@ -231,11 +234,68 @@ CANDIDATES_SIMPLES = {
     'pib':             ['pib_national'],
 }
 # Groupes spatiaux locaux (calcules apres split) = memes noms que le menu correlation
-CANDIDATES_SPATIALES = ['voisins', 'densite', 'section']
+CANDIDATES_SPATIALES = ['voisins', 'densite', 'section', 'iris']
 
-def calculer_rmsle_type(df_bien, features_simples, feature_spatiale=None):
-    """Entraine un modele median sur (baseline + features) et renvoie le RMSLE (prix total)."""
-    # Filtres
+def _ajouter_une_spatiale(nom_spat, X_train, X_test, d, suffixe=''):
+    """Ajoute UNE feature spatiale (colonne 'f_'+suffixe) a X_train/X_test. Anti-leakage."""
+    coords_tr = np.deg2rad(d.loc[X_train.index, ['latitude','longitude']])
+    arbre = BallTree(coords_tr, metric='haversine')
+    col = 'f_' + (suffixe if suffixe else nom_spat)
+    if nom_spat == 'voisins':
+        prix_tr = d.loc[X_train.index,'prix_m2'].values
+        surf_tr = d.loc[X_train.index,'surface_reelle_bati'].values
+        def vois(dr, idx, sb, self_i=None):
+            if self_i is not None:
+                keep = idx != self_i; dr, idx = dr[keep], idx[keep]
+            if len(idx)==0: return np.nan
+            dm = dr*RAYON; pv, sv = prix_tr[idx], surf_tr[idx]
+            m=(sv>=sb*0.6)&(sv<=sb*1.4)
+            if m.sum()>=3: dd,pp=dm[m],pv[m]
+            else: dd,pp=dm,pv
+            w=1.0/(dd+50.0); return np.sum(w*pp)/np.sum(w)
+        k=min(41,len(coords_tr)); dtr,itr=arbre.query(coords_tr,k=k)
+        sb_tr = d.loc[X_train.index,'surface_reelle_bati'].values
+        X_train[col]=[vois(dtr[i],itr[i],sb_tr[i],self_i=i) for i in range(len(itr))]
+        ct=np.deg2rad(d.loc[X_test.index,['latitude','longitude']])
+        dte,ite=arbre.query(ct,k=min(40,len(coords_tr)))
+        sb_te=d.loc[X_test.index,'surface_reelle_bati'].values
+        X_test[col]=[vois(dte[i],ite[i],sb_te[i]) for i in range(len(ite))]
+    elif nom_spat == 'densite':
+        rr=1000/RAYON
+        ct=np.deg2rad(d.loc[X_test.index,['latitude','longitude']])
+        X_train[col]=arbre.query_radius(coords_tr,r=rr,count_only=True)
+        X_test[col]=arbre.query_radius(ct,r=rr,count_only=True)
+    elif nom_spat in ('section', 'iris'):
+        cle = 'code_section' if nom_spat == 'section' else 'geo_iris_id'
+        dtr_=d.loc[X_train.index].copy()
+        mzone=dtr_.groupby(cle)['prix_m2'].median()
+        mc=dtr_.groupby('code_commune')['prix_m2'].median()
+        mg=dtr_['prix_m2'].median()
+        vals=pd.Series(np.nan,index=X_train.index)
+        kf=KFold(n_splits=5,shuffle=True,random_state=42)
+        for pf_,po_ in kf.split(dtr_):
+            z=dtr_.iloc[pf_].groupby(cle)['prix_m2'].median()
+            c=dtr_.iloc[pf_].groupby('code_commune')['prix_m2'].median()
+            sous=dtr_.iloc[po_]
+            v=sous[cle].map(z).fillna(sous['code_commune'].map(c)).fillna(dtr_.iloc[pf_]['prix_m2'].median())
+            vals.iloc[po_]=v.values
+        X_train[col]=vals.values
+        zt=d.loc[X_test.index,cle].map(mzone)
+        ce=d.loc[X_test.index,'code_commune'].map(mc)
+        X_test[col]=zt.fillna(ce).fillna(mg).values
+    return X_train, X_test, col
+
+
+def calculer_rmsle_type(df_bien, features_simples, features_spatiales=None):
+    """
+    Entraine un modele median sur (baseline + features_simples + features_spatiales)
+    et renvoie le RMSLE (prix total). 'features_spatiales' est une LISTE (0, 1 ou +).
+    """
+    if features_spatiales is None:
+        features_spatiales = []
+    if isinstance(features_spatiales, str):
+        features_spatiales = [features_spatiales]
+
     pl, pf = df_bien['prix_m2'].quantile(0.01), df_bien['prix_m2'].quantile(0.99)
     d = df_bien[(df_bien['prix_m2']>=pl)&(df_bien['prix_m2']<=pf)].copy()
     stats_com = d.groupby('code_commune')['prix_m2'].agg(['median','size'])
@@ -249,56 +309,10 @@ def calculer_rmsle_type(df_bien, features_simples, feature_spatiale=None):
     X = d[feats].copy()
     y = d['log_prix_total']
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42)
+    X_train = X_train.copy(); X_test = X_test.copy()
 
-    # Feature spatiale (si demandee)
-    if feature_spatiale is not None:
-        coords_tr = np.deg2rad(d.loc[X_train.index, ['latitude','longitude']])
-        arbre = BallTree(coords_tr, metric='haversine')
-        if feature_spatiale == 'voisins':
-            prix_tr = d.loc[X_train.index,'prix_m2'].values
-            surf_tr = d.loc[X_train.index,'surface_reelle_bati'].values
-            def vois(dr, idx, sb, self_i=None):
-                if self_i is not None:
-                    keep = idx != self_i; dr, idx = dr[keep], idx[keep]
-                if len(idx)==0: return np.nan
-                dm = dr*RAYON; pv, sv = prix_tr[idx], surf_tr[idx]
-                m=(sv>=sb*0.6)&(sv<=sb*1.4)
-                if m.sum()>=3: dd,pp=dm[m],pv[m]
-                else: dd,pp=dm,pv
-                w=1.0/(dd+50.0); return np.sum(w*pp)/np.sum(w)
-            k=min(41,len(coords_tr)); dtr,itr=arbre.query(coords_tr,k=k)
-            sb_tr = d.loc[X_train.index,'surface_reelle_bati'].values
-            X_train=X_train.copy(); X_test=X_test.copy()
-            X_train['f_spatiale']=[vois(dtr[i],itr[i],sb_tr[i],self_i=i) for i in range(len(itr))]
-            ct=np.deg2rad(d.loc[X_test.index,['latitude','longitude']])
-            dte,ite=arbre.query(ct,k=min(40,len(coords_tr)))
-            sb_te=d.loc[X_test.index,'surface_reelle_bati'].values
-            X_test['f_spatiale']=[vois(dte[i],ite[i],sb_te[i]) for i in range(len(ite))]
-        elif feature_spatiale == 'densite':
-            rr=1000/RAYON
-            ct=np.deg2rad(d.loc[X_test.index,['latitude','longitude']])
-            X_train=X_train.copy(); X_test=X_test.copy()
-            X_train['f_spatiale']=arbre.query_radius(coords_tr,r=rr,count_only=True)
-            X_test['f_spatiale']=arbre.query_radius(ct,r=rr,count_only=True)
-        elif feature_spatiale == 'section':
-            dtr_=d.loc[X_train.index].copy()
-            ms=dtr_.groupby('code_section')['prix_m2'].median()
-            mc=dtr_.groupby('code_commune')['prix_m2'].median()
-            mg=dtr_['prix_m2'].median()
-            X_train=X_train.copy(); X_test=X_test.copy()
-            # out-of-fold pour le train
-            vals=pd.Series(np.nan,index=X_train.index)
-            kf=KFold(n_splits=5,shuffle=True,random_state=42)
-            for pf_,po_ in kf.split(dtr_):
-                s=dtr_.iloc[pf_].groupby('code_section')['prix_m2'].median()
-                c=dtr_.iloc[pf_].groupby('code_commune')['prix_m2'].median()
-                sous=dtr_.iloc[po_]
-                v=sous['code_section'].map(s).fillna(sous['code_commune'].map(c)).fillna(dtr_.iloc[pf_]['prix_m2'].median())
-                vals.iloc[po_]=v.values
-            X_train['f_spatiale']=vals.values
-            st=d.loc[X_test.index,'code_section'].map(ms)
-            ce=d.loc[X_test.index,'code_commune'].map(mc)
-            X_test['f_spatiale']=st.fillna(ce).fillna(mg).values
+    for nom_spat in features_spatiales:
+        X_train, X_test, _ = _ajouter_une_spatiale(nom_spat, X_train, X_test, d)
 
     m = CatBoostRegressor(loss_function='Quantile:alpha=0.5', iterations=1000,
                           learning_rate=0.04, depth=8, random_seed=42,
@@ -309,61 +323,219 @@ def calculer_rmsle_type(df_bien, features_simples, feature_spatiale=None):
     total_pred = np.exp(m.predict(X_test))
     return np.sqrt(np.mean((np.log1p(total_pred)-np.log1p(total_reel))**2))
 
-def evaluer_config(features_simples, feature_spatiale=None):
+def evaluer_config(features_simples, features_spatiales=None):
     """Renvoie (rmsle_maisons, rmsle_apparts)."""
-    r_m = calculer_rmsle_type(dp[dp['type_local']=='Maison'], features_simples, feature_spatiale)
-    r_a = calculer_rmsle_type(dp[dp['type_local']=='Appartement'], features_simples, feature_spatiale)
+    r_m = calculer_rmsle_type(dp[dp['type_local']=='Maison'], features_simples, features_spatiales)
+    r_a = calculer_rmsle_type(dp[dp['type_local']=='Appartement'], features_simples, features_spatiales)
     return r_m, r_a
 
-# ======= EXECUTION =======
+# ======= OUTILLAGE COMMUN =======
+# Colonnes reelles produites par les features spatiales (pour l'affichage)
+COLS_SPATIALES = {
+    'voisins':  ['prix_m2_voisins'],
+    'densite':  ['densite_ventes_1km'],
+    'section':  ['prix_m2_section'],
+    'iris':     ['prix_m2_iris'],
+}
+
+def format_sous_features(cols):
+    """Liste les sous-features (colonnes reelles) d'un groupe."""
+    if not cols:
+        return ""
+    return "      -> " + ", ".join(cols)
+
+def moyenne_gain(gm, ga):
+    vals = [g for g in (gm, ga) if g is not None]
+    return sum(vals)/len(vals) if vals else None
+
+# Toutes les features candidates, avec un type ('simple' ou 'spatiale')
+TOUTES_CANDIDATES = ([(nom, 'simple') for nom in CANDIDATES_SIMPLES]
+                     + [(nom, 'spatiale') for nom in CANDIDATES_SPATIALES])
+
+def eval_combinaison(simples_groupes, spatiales):
+    """
+    Evalue une combinaison : liste de groupes simples (noms) + liste de features
+    spatiales. Renvoie (rmsle_maison, rmsle_appart).
+    """
+    cols_simples = []
+    for g in simples_groupes:
+        cols_simples += CANDIDATES_SIMPLES[g]
+    rm = calculer_rmsle_type(dp[dp['type_local']=='Maison'], cols_simples, spatiales)
+    ra = calculer_rmsle_type(dp[dp['type_local']=='Appartement'], cols_simples, spatiales)
+    return rm, ra
+
+
+# ======= MODE 1 : IMPACT SUR BASELINE =======
+def mode_impact():
+    print("\n" + "="*72)
+    print(f"MODE 1 - IMPACT DE CHAQUE FEATURE SUR LA BASELINE - Dep {departement}")
+    print(f"BASELINE = {BASELINE}")
+    print("="*72)
+    print(f"{'Configuration':<22} {'RMSLE maison':>14} {'RMSLE appart':>14}")
+    print("-"*72)
+    rb_m, rb_a = evaluer_config([])
+    print(f"{'BASELINE (seule)':<22} {rb_m:>14.4f} {rb_a:>14.4f}")
+    print(format_sous_features(BASELINE))
+    print("-"*72)
+    resultats = []
+    for nom, cols in CANDIDATES_SIMPLES.items():
+        rm, ra = evaluer_config(cols)
+        resultats.append((f"+ {nom}", rm, ra, (rb_m-rm) if rm else None, (rb_a-ra) if ra else None, cols))
+        print(f"{'+ '+nom:<22} {rm:>14.4f} {ra:>14.4f}"); print(format_sous_features(cols))
+    for nom in CANDIDATES_SPATIALES:
+        rm, ra = evaluer_config([], features_spatiales=[nom])
+        cols = COLS_SPATIALES.get(nom, [nom])
+        resultats.append((f"+ {nom}", rm, ra, (rb_m-rm) if rm else None, (rb_a-ra) if ra else None, cols))
+        print(f"{'+ '+nom:<22} {rm:>14.4f} {ra:>14.4f}"); print(format_sous_features(cols))
+
+    print("\n" + "="*72)
+    print("CLASSEMENT PAR IMPACT (gain de RMSLE vs baseline, moyenne des 2 types)")
+    print("="*72)
+    tries = sorted(resultats, key=lambda r: moyenne_gain(r[3], r[4]) or -999, reverse=True)
+    print(f"{'Feature':<22} {'gain maison':>12} {'gain appart':>12} {'gain moyen':>12}")
+    print("-"*72)
+    for nom, rm, ra, gm, ga, cols in tries:
+        gm_s = f"{gm:+.4f}" if gm is not None else "  n/a"
+        ga_s = f"{ga:+.4f}" if ga is not None else "  n/a"
+        gmo = moyenne_gain(gm, ga)
+        print(f"{nom:<22} {gm_s:>12} {ga_s:>12} {(gmo if gmo else 0):>+12.4f}")
+        print(f"      ({', '.join(cols)})")
+    print(f"\nRappel baseline : maison {rb_m:.4f} | appart {rb_a:.4f}")
+
+
+# ======= MODE 2 : ABLATION (retirer chaque feature du modele COMPLET) =======
+def mode_ablation():
+    print("\n" + "="*72)
+    print(f"MODE 2 - ABLATION : apport de chaque feature DANS le modele complet - Dep {departement}")
+    print("="*72)
+    tous_simples = list(CANDIDATES_SIMPLES.keys())
+    tous_spatiaux = list(CANDIDATES_SPATIALES)
+    rc_m, rc_a = eval_combinaison(tous_simples, tous_spatiaux)
+    print(f"COMPLET : maison {rc_m:.4f} | appart {rc_a:.4f}\n")
+    print(f"{'Feature retiree':<22} {'RMSLE maison':>13} {'RMSLE appart':>13} {'perte moyenne':>14}")
+    print("-"*72)
+    resultats = []
+    for nom in tous_simples:
+        s = [x for x in tous_simples if x != nom]
+        rm, ra = eval_combinaison(s, tous_spatiaux)
+        perte = moyenne_gain((rm-rc_m) if rm else None, (ra-rc_a) if ra else None)
+        resultats.append((nom, rm, ra, perte, CANDIDATES_SIMPLES[nom]))
+    for nom in tous_spatiaux:
+        sp = [x for x in tous_spatiaux if x != nom]
+        rm, ra = eval_combinaison(tous_simples, sp)
+        perte = moyenne_gain((rm-rc_m) if rm else None, (ra-rc_a) if ra else None)
+        resultats.append((nom, rm, ra, perte, COLS_SPATIALES.get(nom, [nom])))
+    for nom, rm, ra, perte, cols in sorted(resultats, key=lambda r: r[3] or -999, reverse=True):
+        print(f"{'- '+nom:<22} {rm:>13.4f} {ra:>13.4f} {(perte if perte else 0):>+14.4f}")
+        print(f"      ({', '.join(cols)})")
+    print("\nPerte positive = retirer cette feature DEGRADE -> elle est utile dans le complet.")
+    print("Perte ~0 = feature redondante (le modele s'en passe sans dommage).")
+
+
+# ======= MODE 3 : SELECTION GLOUTONNE (greedy) =======
+def mode_greedy():
+    print("\n" + "="*72)
+    print(f"MODE 3 - SELECTION GLOUTONNE : meilleure combinaison pas a pas - Dep {departement}")
+    print("="*72)
+    seuil = input("  Gain minimal pour continuer d'ajouter (defaut 0.0005) : ").strip()
+    seuil = float(seuil) if seuil else 0.0005
+
+    rb_m, rb_a = evaluer_config([])
+    rmsle_courant = moyenne_gain(rb_m, rb_a)
+    print(f"\nDepart (baseline) : maison {rb_m:.4f} | appart {rb_a:.4f} | moyen {rmsle_courant:.4f}")
+
+    simples_retenus, spatiales_retenues = [], []
+    restantes = list(TOUTES_CANDIDATES)
+    etape = 1
+    while restantes:
+        meilleure, meilleur_rmsle, meilleur_rm, meilleur_ra = None, rmsle_courant, None, None
+        for nom, typ in restantes:
+            if typ == 'simple':
+                rm, ra = eval_combinaison(simples_retenus + [nom], spatiales_retenues)
+            else:
+                rm, ra = eval_combinaison(simples_retenus, spatiales_retenues + [nom])
+            rmo = moyenne_gain(rm, ra)
+            if rmo is not None and rmo < meilleur_rmsle:
+                meilleure, meilleur_rmsle = (nom, typ), rmo
+                meilleur_rm, meilleur_ra = rm, ra
+        gain = rmsle_courant - meilleur_rmsle
+        if meilleure is None or gain < seuil:
+            print(f"\n  -> Arret : aucune feature restante n'apporte >= {seuil}")
+            break
+        nom, typ = meilleure
+        if typ == 'simple': simples_retenus.append(nom)
+        else: spatiales_retenues.append(nom)
+        restantes = [c for c in restantes if c[0] != nom]
+        print(f"  Etape {etape} : + {nom:<18} -> RMSLE moyen {meilleur_rmsle:.4f} "
+              f"(gain {gain:+.4f})  [maison {meilleur_rm:.4f}, appart {meilleur_ra:.4f}]")
+        rmsle_courant = meilleur_rmsle
+        etape += 1
+
+    print("\n" + "="*72)
+    print("MEILLEURE COMBINAISON TROUVEE (ordre d'ajout = ordre d'importance)")
+    print("="*72)
+    print(f"  Features simples   : {simples_retenus}")
+    print(f"  Features spatiales : {spatiales_retenues}")
+    print(f"  RMSLE moyen final  : {rmsle_courant:.4f} (baseline : {moyenne_gain(rb_m, rb_a):.4f})")
+    print(f"  Gain total         : {moyenne_gain(rb_m, rb_a) - rmsle_courant:+.4f}")
+
+
+# ======= MODE 4 : COMPLEMENTARITE DE DEUX FEATURES =======
+def mode_complementarite():
+    print("\n" + "="*72)
+    print("MODE 4 - COMPLEMENTARITE DE DEUX FEATURES")
+    print("="*72)
+    dispo = [n for n, _ in TOUTES_CANDIDATES]
+    print(f"  Features disponibles : {', '.join(dispo)}")
+    f1 = input("  Feature 1 : ").strip()
+    f2 = input("  Feature 2 : ").strip()
+    if f1 not in dispo or f2 not in dispo:
+        print("  Nom(s) invalide(s)."); return
+
+    def split_type(nom):
+        return ([nom], []) if nom in CANDIDATES_SIMPLES else ([], [nom])
+
+    s1, sp1 = split_type(f1)
+    s2, sp2 = split_type(f2)
+    rb_m, rb_a = evaluer_config([])
+    r1_m, r1_a = eval_combinaison(s1, sp1)
+    r2_m, r2_a = eval_combinaison(s2, sp2)
+    r12_m, r12_a = eval_combinaison(s1 + s2, sp1 + sp2)
+
+    print(f"\n{'Configuration':<28} {'maison':>10} {'appart':>10} {'gain moyen':>12}")
+    print("-"*64)
+    def ligne(lbl, rm, ra):
+        g = moyenne_gain((rb_m-rm) if rm else None, (rb_a-ra) if ra else None)
+        print(f"{lbl:<28} {rm:>10.4f} {ra:>10.4f} {(g if g else 0):>+12.4f}")
+    print(f"{'baseline':<28} {rb_m:>10.4f} {rb_a:>10.4f} {0:>+12.4f}")
+    ligne(f"+ {f1}", r1_m, r1_a)
+    ligne(f"+ {f2}", r2_m, r2_a)
+    ligne(f"+ {f1} + {f2}", r12_m, r12_a)
+
+    g1 = moyenne_gain((rb_m-r1_m) if r1_m else None, (rb_a-r1_a) if r1_a else None) or 0
+    g2 = moyenne_gain((rb_m-r2_m) if r2_m else None, (rb_a-r2_a) if r2_a else None) or 0
+    g12 = moyenne_gain((rb_m-r12_m) if r12_m else None, (rb_a-r12_a) if r12_a else None) or 0
+    print(f"\n  Gain {f1} seul : {g1:+.4f} | {f2} seul : {g2:+.4f} | ensemble : {g12:+.4f}")
+    surplus = g12 - max(g1, g2)
+    if surplus > 0.001:
+        print(f"  -> COMPLEMENTAIRES : ensemble ({g12:+.4f}) > meilleur seul ({max(g1,g2):+.4f}), surplus {surplus:+.4f}")
+    else:
+        print(f"  -> REDONDANTES : ensemble n'apporte quasi rien de plus que le meilleur seul (surplus {surplus:+.4f})")
+
+
+# ======= MENU =======
 print("\n" + "="*72)
-print(f"IMPACT DES FEATURES SUR LA BASELINE - Departement {departement}")
-print(f"BASELINE = {BASELINE}")
+print("OUTIL DE TEST DES FEATURES")
 print("="*72)
-print(f"{'Configuration':<22} {'RMSLE maison':>14} {'RMSLE apppart':>14}")
-print("-"*72)
+print("  1 = Impact de chaque feature sur la baseline")
+print("  2 = Ablation (apport de chaque feature dans le modele complet)")
+print("  3 = Selection gloutonne (meilleure combinaison pas a pas)")
+print("  4 = Complementarite de deux features")
+choix = input("  Choix (1-4) : ").strip()
 
 t0 = time.time()
-# 1. Baseline seule
-rb_m, rb_a = evaluer_config([])
-print(f"{'BASELINE (seule)':<22} {rb_m:>14.4f} {rb_a:>14.4f}")
-print("-"*72)
-
-resultats = []
-# 2. Baseline + chaque feature simple
-for nom, cols in CANDIDATES_SIMPLES.items():
-    rm, ra = evaluer_config(cols)
-    gain_m = (rb_m - rm) if rm else None
-    gain_a = (rb_a - ra) if ra else None
-    resultats.append((f"+ {nom}", rm, ra, gain_m, gain_a))
-    print(f"{'+ '+nom:<22} {rm:>14.4f} {ra:>14.4f}")
-
-# 3. Baseline + chaque feature spatiale
-for nom in CANDIDATES_SPATIALES:
-    rm, ra = evaluer_config([], feature_spatiale=nom)
-    gain_m = (rb_m - rm) if rm else None
-    gain_a = (rb_a - ra) if ra else None
-    resultats.append((f"+ {nom}", rm, ra, gain_m, gain_a))
-    print(f"{'+ '+nom:<22} {rm:>14.4f} {ra:>14.4f}")
-
-# ======= CLASSEMENT PAR IMPACT =======
-print("\n" + "="*72)
-print("CLASSEMENT PAR IMPACT (baisse de RMSLE vs baseline, moyenne des 2 types)")
-print("="*72)
-def gain_moyen(r):
-    gm, ga = r[3], r[4]
-    vals = [g for g in (gm, ga) if g is not None]
-    return sum(vals)/len(vals) if vals else -999
-resultats_tries = sorted(resultats, key=gain_moyen, reverse=True)
-print(f"{'Feature':<22} {'gain maison':>12} {'gain appart':>12} {'gain moyen':>12}")
-print("-"*72)
-for nom, rm, ra, gm, ga in resultats_tries:
-    gm_s = f"{gm:+.4f}" if gm is not None else "  n/a"
-    ga_s = f"{ga:+.4f}" if ga is not None else "  n/a"
-    print(f"{nom:<22} {gm_s:>12} {ga_s:>12} {gain_moyen((nom,rm,ra,gm,ga)):>+12.4f}")
-
-print("\n" + "="*72)
-print(f"Rappel baseline : maison {rb_m:.4f} | appart {rb_a:.4f}")
-print("Un gain positif = la feature AMELIORE (baisse le RMSLE).")
-print("Un gain ~0 ou negatif = la feature n'apporte rien (voire bruite).")
-print(f"Temps total : {time.time()-t0:.0f}s")
+if choix == '2':   mode_ablation()
+elif choix == '3': mode_greedy()
+elif choix == '4': mode_complementarite()
+else:              mode_impact()
+print(f"\nTemps total : {time.time()-t0:.0f}s")
