@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 import geopandas as gpd
 
 # ==========================================
-# 0. CHOIX DES FEATURES ET DU SPLIT
+# 0. CHOIX DES FEATURES
 # ==========================================
 def demander(question, defaut=True):
     ind = "O/n" if defaut else "o/N"
@@ -50,6 +50,7 @@ print("\n--- Enrichissements communaux ---")
 FA['dpe']         = demander("Profil DPE ?", True)
 FA['chauffage']   = demander("Profil chauffage ?", True)
 FA['revenus']     = demander("Revenus / Gini / minima ?", True)
+FA['densite_pop'] = demander("Densite de population ?", True)
 print("\n--- Distances ---")
 FA['dist_transport']  = demander("Distance gare ?", True)
 FA['dist_monument']   = demander("Distance monument ?", True)
@@ -66,13 +67,7 @@ FA['chomage']          = demander("Taux de chomage departemental ?", False)
 FA['taux_credit']      = demander("Taux de credit immobilier ?", False)
 FA['taux_inflation']   = demander("Taux d'inflation ?", False)
 FA['pib']              = demander("PIB national ?", False)
-
-print("\n--- Mode de decoupage pour la validation (Early Stopping) ---")
-print("  1 = Aleatoire 70/30 (melange toutes les annees)")
-print("  2 = Temporel (train < derniere annee, validation = derniere annee)")
-_choix_split = input("  Choix (1/2, defaut 1) : ").strip()
-MODE_SPLIT = 'temporel' if _choix_split == '2' else 'aleatoire'
-print(f"  -> Split de validation : {MODE_SPLIT}")
+FA['ipc']              = demander("Indice prix conso (IPC) ?", False)
 
 # ==========================================
 # 1. CONNEXIONS ET ZONE
@@ -174,6 +169,15 @@ hopitaux = pd.read_sql(q_hop, con=moteur_enr)
 universites = pd.read_sql(q_uni, con=moteur_enr)
 
 revenus = pd.read_sql(f"SELECT code_commune, median_revenu_disponible, indice_gini, pct_minima_sociaux FROM demographie_communes WHERE {filtre_rev};", con=moteur_enr)
+densite_pop = None
+if FA['densite_pop']:
+    densite_pop = pd.read_sql("""
+        SELECT d.code_commune, d.densite_population
+        FROM densite_population d
+        INNER JOIN (SELECT code_commune, MAX(annee) AS a FROM densite_population GROUP BY code_commune) m
+          ON d.code_commune = m.code_commune AND d.annee = m.a
+    """, con=moteur_enr)
+    densite_pop['densite_population'] = pd.to_numeric(densite_pop['densite_population'], errors='coerce')
 for col in ['median_revenu_disponible','indice_gini','pct_minima_sociaux']:
     revenus[col] = pd.to_numeric(revenus[col], errors='coerce')
 
@@ -209,6 +213,12 @@ if FA['chomage']:
 taux = None
 if FA['taux_credit'] or FA['taux_inflation']:
     taux = pd.read_sql("SELECT annee, mois, taux_credit_immo_fixe, taux_inflation FROM taux_macro", con=moteur_enr)
+ipc = None
+if FA['ipc']:
+    ipc = pd.read_sql("SELECT annee, mois, indice_prix_conso FROM indice_prix_conso", con=moteur_enr)
+    ipc['indice_prix_conso'] = pd.to_numeric(ipc['indice_prix_conso'], errors='coerce')
+    ipc = ipc.sort_values(['annee','mois']).reset_index(drop=True)
+    ipc['inflation_mensuelle'] = ipc['indice_prix_conso'].pct_change().fillna(0) * 100
 
 # ==========================================
 # 2. FUSION ET DISTANCES
@@ -216,6 +226,8 @@ if FA['taux_credit'] or FA['taux_inflation']:
 print("Etape 2 : Fusion et distances...")
 donnees = pd.merge(maisons_apparts, dpe, left_on='code_commune', right_on='code_insee_ban', how='left')
 donnees = pd.merge(donnees, revenus, on='code_commune', how='left')
+if densite_pop is not None:
+    donnees = pd.merge(donnees, densite_pop, on='code_commune', how='left')
 
 # Cles departement + trimestre (pour le chomage)
 donnees['code_departement'] = donnees['code_commune'].str[:2]
@@ -230,6 +242,9 @@ if chomage is not None:
 if taux is not None:
     donnees = pd.merge(donnees, taux, left_on=['annee_vente','mois_vente'],
                        right_on=['annee','mois'], how='left').drop(columns=['annee','mois'], errors='ignore')
+if ipc is not None:
+    donnees = pd.merge(donnees, ipc[['annee','mois','indice_prix_conso','inflation_mensuelle']],
+                       left_on=['annee_vente','mois_vente'], right_on=['annee','mois'], how='left').drop(columns=['annee','mois'], errors='ignore')
 
 RAYON_TERRE_METRES = 6371000
 points_rad = np.deg2rad(donnees[['latitude','longitude']])
@@ -293,7 +308,7 @@ donnees['volume_etudiants_proche'] = donnees['volume_etudiants_proche'].fillna(0
 donnees['surface_terrain'] = donnees['surface_terrain'].fillna(0)
 if 'potentiel_urbain' in donnees.columns:
     donnees['potentiel_urbain'] = donnees['potentiel_urbain'].fillna(donnees['potentiel_urbain'].median())
-for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation']:
+for col in ['pib_national','taux_chomage','taux_credit_immo_fixe','taux_inflation','densite_population','indice_prix_conso','inflation_mensuelle']:
     if col in donnees.columns:
         donnees[col] = donnees[col].fillna(donnees[col].median())
 
@@ -319,8 +334,10 @@ def build_features_base():
     if FA['surface']:    f += ['surface_reelle_bati','log_surface','surface_par_piece']
     if FA['dist_universite']: f += ['volume_etudiants_proche']
     if FA['revenus']:    f += colonnes_revenus
+    if FA['densite_pop'] and 'densite_population' in donnees_propres.columns: f += ['densite_population']
     if FA['potentiel_urbain'] and 'potentiel_urbain' in donnees_propres.columns: f += ['potentiel_urbain']
     if FA['pib'] and 'pib_national' in donnees_propres.columns: f += ['pib_national']
+    if FA['ipc'] and 'indice_prix_conso' in donnees_propres.columns: f += ['indice_prix_conso', 'inflation_mensuelle']
     if FA['chomage'] and 'taux_chomage' in donnees_propres.columns: f += ['taux_chomage']
     if FA['taux_credit'] and 'taux_credit_immo_fixe' in donnees_propres.columns: f += ['taux_credit_immo_fixe']
     if FA['taux_inflation'] and 'taux_inflation' in donnees_propres.columns: f += ['taux_inflation']
@@ -419,23 +436,7 @@ for type_bien, df_bien in datasets.items():
     X = X[features_finales]
 
     print("  -> Entrainement des modeles quantiles...")
-    
-    # Application du choix de split pour l'Early Stopping (Validation)
-    if MODE_SPLIT == 'aleatoire':
-        X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
-    else:
-        annees = df_bien.loc[X.index, 'annee_vente']
-        annee_max = annees.max()
-        mask_val = (annees == annee_max).values
-        
-        # Securite si trop peu de donnees sur la derniere annee
-        if mask_val.sum() < 50 or (~mask_val).sum() < 200:
-            print(f"     * Pas assez de donnees pour split temporel (Train: {(~mask_val).sum()}, Val: {mask_val.sum()}), repli sur aleatoire.")
-            X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
-        else:
-            X_tr, y_tr = X[~mask_val], y[~mask_val]
-            X_val, y_val = X[mask_val], y[mask_val]
-
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
     modeles = {}
     for nom, alpha in {'bas':0.025,'median':0.50,'haut':0.975}.items():
         m = CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}', iterations=1000,

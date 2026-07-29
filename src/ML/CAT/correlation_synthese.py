@@ -188,7 +188,7 @@ for type_bien, df_bien in datasets.items():
 
     # Validation early stopping
     if MODE_SPLIT == 'aleatoire':
-        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+        X_tr, X_val, y_tr, y_val = train_test_split(X_train, y_train, test_size=0.3, random_state=42)
     else:
         annees_train = df_bien.loc[X_train.index, 'annee_vente']
         mask_val = (annees_train == annees_train.max()).values
