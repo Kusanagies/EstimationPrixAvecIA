@@ -183,6 +183,11 @@ Le projet sépare volontairement plusieurs rôles distincts :
   distingue imprécision et biais. Voir Phase 9.
 - **Inspection du décile bas** (`inspecter_d1.py`) — dissèque la composition des
   biens les moins chers pour arbitrer entre artefacts à filtrer et biais structurel.
+- **Investigation production vs évaluation** (`investiguer_ecart.py`) — compare, sur
+  un même échantillon, les features et le MAPE reconstruits par la chaîne de production
+  vs l'évaluation ; sépare les biens dans/hors filtre pour isoler l'effet des données
+  non-marché. Complété par `diag_un_bien.py` (diagnostic feature par feature sur un
+  seul bien, pour repérer une valeur aberrante).
 - **Analyse d'impact des features** (`impact_features.py`) — outil multi-modes :
   impact sur baseline, ablation, sélection gloutonne (meilleure combinaison pas à
   pas) et complémentarité entre deux features.
@@ -401,6 +406,17 @@ temps), mais son encodage brut suffit.*
 - **Effet mesuré** (dép. 34) : kurtosis des erreurs log divisé par ~3 (de ~5 à ~1,7), RMSLE
   en baisse (~−15 %), MAPE assainie, biais de sous-estimation réduit. Appliqué de façon
   identique à l'entraînement, l'évaluation et le test pour la cohérence de la chaîne.
+- **Preuve de l'indispensabilité du filtre** (investigation bout-en-bout, `investiguer_ecart.py`).
+  En estimant un échantillon de biens réels *sans* appliquer le filtre, le MAPE global explose :
+  sur un test à Paris, les biens **dans le filtre** donnent ~15 % de MAPE (cohérent avec
+  l'évaluation), mais une poignée de biens **hors filtre** (4 % de l'échantillon) atteignent
+  un MAPE de plusieurs milliers de pour-cent, faisant grimper la moyenne globale à ~158 %.
+  Ces biens ne sont pas « difficiles à prédire » : ce sont des **transactions corrompues**
+  (ventes à 1 €, parts indivises, lots mal découpés) dont la `valeur_fonciere` aberrante rend
+  le rapport d'erreur absurde. Le filtre ne sert donc pas à embellir les métriques, mais à
+  **exclure des données non-marché** dont les valeurs fausses rendraient toute évaluation
+  ininterprétable. C'est aussi un rappel que le MAPE, très sensible aux dénominateurs
+  minuscules, doit toujours être lu avec l'**erreur médiane** (robuste, ~10 %).
 
 ### Phase 8ter — Analyse de normalité des erreurs
 
@@ -473,6 +489,32 @@ professionnels ; il est **acté et documenté** plutôt que masqué par un sur-f
 - Veiller à la **cohérence** entre features d'entraînement et features reproductibles
   en production : les trois composants (estimation, serveur, interface) doivent
   partager le même contrat de données.
+
+#### Cohérence entraînement / estimation (contrat de features)
+
+Le risque majeur en production est qu'une feature soit **reconstruite différemment**
+au moment de l'estimation par rapport à l'entraînement — le modèle reçoit alors une
+entrée qui ne correspond pas à ce qu'il a appris. Un audit bout-en-bout a révélé
+puis corrigé plusieurs écarts de ce type :
+
+- **Pondération des voisins** : `prix_m2_voisins` (la feature la plus importante,
+  +0,022 de RMSLE) était pondérée en **radians** à l'estimation (`1/(d+1e-9)`) alors
+  que l'entraînement utilise des **mètres** (`1/(d+50)`). Corrigé pour appliquer la
+  formule strictement identique (conversion radians → mètres, amortissement +50 m,
+  filtre de surface ±40 %, exclusion du bien lui-même).
+- **Reconstruction des features manquantes** : toute feature activée à l'entraînement
+  doit être reconstructible à l'estimation (sauvegardée dans le contexte). Exemple
+  corrigé : `densite_population` (persistée par commune + médiane de repli). Règle
+  générale : ne garder en production que les features validées **et** reconstructibles.
+
+#### Garde-fou départemental
+
+Les modèles étant **entraînés par département**, un modèle chargé pour un département
+donné produit des estimations absurdes s'il reçoit une adresse d'un autre département
+(prix parisiens appliqués à un bien de l'Hérault : MAPE > 150 %). Recommandation :
+vérifier dans l'estimation que le `code_insee` du bien correspond au département du
+modèle chargé, et renvoyer une erreur explicite sinon — robustesse produit sans
+impact sur la performance de modélisation.
 
 ---
 
