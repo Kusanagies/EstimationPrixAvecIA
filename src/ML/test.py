@@ -1,16 +1,16 @@
 """
-TEST D'ESTIMATION SUR L'ANNEE 2025 (test de generalisation temporelle)
-=======================================================================
-Tire des biens REELS de l'ANNEE 2025 uniquement et les compare a l'estimation.
-
-Pourquoi 2025 ? Le modele est cense etre entraine sur les annees < 2025
-(comme dans correlation_cat.py). Tester sur 2025 = tester sur des biens que
-le modele n'a pas vus a l'entrainement -> mesure de generalisation honnete
-(et non un test d'integration optimiste sur des biens deja vus).
+TEST D'ESTIMATION SUR BIENS REELS (test de generalisation)
+===========================================================
+Tire des biens REELS depuis synthese et les compare a l'estimation d'estimer.
+Au demarrage, on choisit le perimetre temporel :
+  - OUI (defaut) : uniquement l'annee 2025 -> test de generalisation temporelle
+    (biens que le modele n'a pas vus si entraine sur < 2025).
+  - NON : TOUTES les annees -> chaque bien est estime avec SA PROPRE annee/mois
+    de vente (indispensable pour ne pas fausser l'estimation).
 
 NB : si le modele de production a ete entraine sur TOUTES les annees (2025
-inclus), ce test reste plus realiste qu'un tirage aleatoire, mais n'est pas
-100% "hors echantillon". Pour la mesure parfaitement honnete, voir correlation_cat.py.
+inclus), le test 2025 reste plus realiste qu'un tirage aleatoire, mais n'est pas
+100% "hors echantillon". Pour la mesure parfaitement honnete, voir correlation_synthese.py.
 
 On passe code_section directement (depuis la base) pour eviter les appels API
 IGN lents pendant le test.
@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from estimer import estimer
 
 MARGE = 0.20        # marge de reference (20%)
-ANNEE_TEST = 2025   # on ne teste que sur cette annee
+ANNEE_TEST = 2025   # annee utilisee si on limite le test a une seule annee
 
 # ==========================================
 # CONNEXION
@@ -46,6 +46,14 @@ except Exception as e:
 
 departement = input("Departement (ex: 34) : ").strip()
 nb_test = int(input("Nombre de tests par type : ").strip())
+rep = input(f"Tester uniquement sur l'annee {ANNEE_TEST} ? (O/n) : ").strip().lower()
+SEULEMENT_2025 = not rep.startswith('n')   # defaut = oui (comportement historique)
+if SEULEMENT_2025:
+    print(f"  -> Test restreint a l'annee {ANNEE_TEST} (generalisation temporelle).")
+    LIBELLE_PERIODE = f"annee {ANNEE_TEST}"
+else:
+    print("  -> Test sur TOUTES les annees (chaque bien estime avec sa propre annee).")
+    LIBELLE_PERIODE = "toutes annees"
 
 # ==========================================
 # TIRAGE DES BIENS DE TEST (ANNEE 2025 UNIQUEMENT)
@@ -56,22 +64,26 @@ def tirer_biens(type_synthese, n):
     prix median de sa commune et exclut les transactions hors marche."""
     # On charge TOUS les biens 2025 du type (pas seulement n) pour pouvoir
     # calculer des medianes communales fiables avant de filtrer et d'echantillonner.
+    filtre_annee = f"AND YEAR(date) = {ANNEE_TEST}" if SEULEMENT_2025 else ""
     df = pd.read_sql(f"""
         SELECT id, communes_code AS code_insee, communes_code AS code_commune,
                parcelles_code, lat, lng, prix_m2, valeur_fonciere,
                surface AS surface_reelle_bati, nb_pieces AS nombre_pieces_principales,
-               surface_terrain, adresses_numero, adresses_voie
+               surface_terrain, adresses_numero, adresses_voie,
+               YEAR(date) AS annee_vente, MONTH(date) AS mois_vente
         FROM synthese
         WHERE departements_code = '{departement}'
           AND typebien = '{type_synthese}'
-          AND YEAR(date) = {ANNEE_TEST}          -- <<< FILTRE ANNEE 2025
+          {filtre_annee}
           AND surface > 9 AND prix_m2 > 0 AND nb_pieces > 0;
     """, con=moteur)
     # Conversions numeriques (synthese renvoie du 'object' avec les NULL)
     for c in ['prix_m2','valeur_fonciere','surface_reelle_bati',
-              'nombre_pieces_principales','surface_terrain','lat','lng']:
+              'nombre_pieces_principales','surface_terrain','lat','lng',
+              'annee_vente','mois_vente']:
         df[c] = pd.to_numeric(df[c], errors='coerce')
-    df = df.dropna(subset=['valeur_fonciere','surface_reelle_bati','nombre_pieces_principales','lat','lng'])
+    df = df.dropna(subset=['valeur_fonciere','surface_reelle_bati','nombre_pieces_principales',
+                           'lat','lng','annee_vente'])
 
     if len(df) == 0:
         return df
@@ -102,10 +114,10 @@ def tirer_biens(type_synthese, n):
 def tester_type(type_synthese, type_modele, n):
     biens = tirer_biens(type_synthese, n)
     if len(biens) == 0:
-        print(f"\n{type_modele} : aucun bien 2025 trouve."); return None
+        print(f"\n{type_modele} : aucun bien trouve ({LIBELLE_PERIODE})."); return None
 
     print("\n" + "=" * 108)
-    print(f"TESTS - {type_modele.upper()} (annee {ANNEE_TEST}, {len(biens)} biens)")
+    print(f"TESTS - {type_modele.upper()} ({LIBELLE_PERIODE}, {len(biens)} biens)")
     print("=" * 108)
     print(f"{'#':>3} {'idDVF':>9} {'Surf':>5} {'Terr':>6} {'PrixReel':>10} {'PrixEstime':>11} "
           f"{'TotalBas':>10} {'TotalHaut':>10} {'Err%':>6}  Statut")
@@ -123,10 +135,15 @@ def tester_type(type_synthese, type_modele, n):
         geo = {'lat': float(b['lat']), 'lon': float(b['lng']),
                'code_insee': str(b['code_insee']), 'label': f"bien {b['id']}"}
 
+        # Annee/mois REELS du bien : indispensable en mode "toutes annees"
+        # (estimer un bien de 2016 avec l'annee 2025 fausserait le resultat).
+        annee_bien = int(b['annee_vente'])
+        mois_bien = int(b['mois_vente']) if pd.notna(b['mois_vente']) else 6
+
         res = estimer(
             adresse=None, surface=surface, type_bien=type_modele,
             nb_pieces=int(b['nombre_pieces_principales']),
-            surface_terrain=terrain, annee=ANNEE_TEST, mois=6,
+            surface_terrain=terrain, annee=annee_bien, mois=mois_bien,
             geo_resolu=geo, code_section=code_section
         )
         if 'erreur' in res:
@@ -149,7 +166,7 @@ def tester_type(type_synthese, type_modele, n):
     d = pd.DataFrame(resultats)
     nb_ok = int(d['ok'].sum())
     print("-" * 108)
-    print(f"RESUME {type_modele.upper()} ({ANNEE_TEST}) : {nb_ok} OK / {len(d)-nb_ok} hors marge sur {len(d)} | "
+    print(f"RESUME {type_modele.upper()} ({LIBELLE_PERIODE}) : {nb_ok} OK / {len(d)-nb_ok} hors marge sur {len(d)} | "
           f"MAPE {d['err'].mean()*100:.1f} % | err. mediane {d['err'].median()*100:.1f} % | "
           f"couverture {d['dans'].mean()*100:.1f} %")
     return d
@@ -165,7 +182,7 @@ resultats_types['Appartement'] = tester_type('appartement', 'appartements', nb_t
 # BILAN GLOBAL
 # ==========================================
 print("\n" + "=" * 90)
-print(f"BILAN GLOBAL - ANNEE {ANNEE_TEST} (test de generalisation)")
+print(f"BILAN GLOBAL - {LIBELLE_PERIODE.upper()} (test de generalisation)")
 print("=" * 90)
 total_ok = 0
 total_tests = 0

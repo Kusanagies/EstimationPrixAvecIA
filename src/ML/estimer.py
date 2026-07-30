@@ -276,6 +276,8 @@ def construire_features(lat, lon, code_insee, surface, type_bien,
         'median_revenu_disponible': val_commune('median_revenu_disponible'),
         'indice_gini': val_commune('indice_gini'),
         'pct_minima_sociaux': val_commune('pct_minima_sociaux'),
+        'densite_population': CTX.get('densite_pop_par_commune', {}).get(
+            code_insee, CTX.get('densite_pop_mediane', 0)),
         'dist_mer_m': _distance_min(arbre_mer, point_rad),
         'dist_lac_m': _distance_min(arbre_lac, point_rad),
         'dist_estuaire_m': _distance_min(arbre_estuaire, point_rad),

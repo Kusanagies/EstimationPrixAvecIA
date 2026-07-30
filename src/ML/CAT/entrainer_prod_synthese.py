@@ -436,10 +436,10 @@ for type_bien, df_bien in datasets.items():
     X = X[features_finales]
 
     print("  -> Entrainement des modeles quantiles...")
-    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
     modeles = {}
     for nom, alpha in {'bas':0.025,'median':0.50,'haut':0.975}.items():
-        m = CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}', iterations=1000,
+        m = CatBoostRegressor(loss_function=f'Quantile:alpha={alpha}', iterations=1500,
                               learning_rate=0.04, depth=8, l2_leaf_reg=3.0,
                               random_seed=42, early_stopping_rounds=50, verbose=False)
         m.fit(X_tr, y_tr, eval_set=(X_val, y_val), use_best_model=True)
@@ -475,6 +475,12 @@ for type_bien, df_bien in datasets.items():
     }
     if poles is not None and len(poles) > 0:
         contexte['poles_urbains'] = poles[['latitude','longitude','poids_aire']].values
+
+    # Densite de population par commune (pour reconstruire la feature en estimation)
+    if FA['densite_pop'] and 'densite_population' in donnees.columns:
+        dens = donnees.drop_duplicates('code_commune').set_index('code_commune')['densite_population']
+        contexte['densite_pop_par_commune'] = dens.dropna().to_dict()
+        contexte['densite_pop_mediane'] = float(donnees['densite_population'].median())
 
     # Valeurs economiques recentes (pour qu'estimer.py reconstruise ces features)
     if chomage is not None:
